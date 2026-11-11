@@ -107,18 +107,37 @@ pub(crate) async fn stream_with_source(
     request_context: RequestAttemptContext,
     cancellation: CancellationToken,
 ) -> Result<ProviderStream, gateway_core::error::ProviderError> {
-    let kind = account.provider().clone();
-    let provider = provider_bps::initialize(
+    stream_with_config(
         provider_bps::BpsConfig {
             base_url: server.uri(),
             auth_base_url: server.uri(),
             quota_base_url: server.uri(),
+            upstream_transport: provider_bps::BpsUpstreamTransport::Sse,
             ..Default::default()
         },
+        protocol,
         ports,
+        account,
+        source,
+        request_context,
+        cancellation,
     )
-    .unwrap()
-    .core_provider();
+    .await
+}
+
+pub(crate) async fn stream_with_config(
+    config: provider_bps::BpsConfig,
+    protocol: &str,
+    ports: gateway_core::provider_ports::ProviderStorePorts,
+    account: ProviderAccount,
+    source: serde_json::Value,
+    request_context: RequestAttemptContext,
+    cancellation: CancellationToken,
+) -> Result<ProviderStream, gateway_core::error::ProviderError> {
+    let kind = account.provider().clone();
+    let provider = provider_bps::initialize(config, ports)
+        .unwrap()
+        .core_provider();
     let operation = Operation::Generate(GenerateRequest::from_protocol_payload(
         ProtocolPayload::json_object(protocol, source.as_object().unwrap().clone()).unwrap(),
     ));
@@ -136,10 +155,19 @@ pub(crate) async fn stream_with_source(
         vec![ProviderModel::new(
             kind,
             UpstreamModelId::new("model").unwrap(),
-            ModelCapabilities::new(BTreeSet::from([OperationKind::Generate]), None).with_feature(
-                gateway_core::operation::Feature::Vision,
-                gateway_core::routing::SupportLevel::Native,
-            ),
+            ModelCapabilities::new(BTreeSet::from([OperationKind::Generate]), None)
+                .with_feature(
+                    gateway_core::operation::Feature::Tools,
+                    gateway_core::routing::SupportLevel::Emulated,
+                )
+                .with_feature(
+                    gateway_core::operation::Feature::Reasoning,
+                    gateway_core::routing::SupportLevel::Native,
+                )
+                .with_feature(
+                    gateway_core::operation::Feature::Vision,
+                    gateway_core::routing::SupportLevel::Native,
+                ),
         )],
         vec![],
     )

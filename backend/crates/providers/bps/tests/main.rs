@@ -1,4 +1,4 @@
-//! BPS Provider 的账号、OAuth 与 HTTP 集成验证入口
+//! BPS Provider 的账号、OAuth、HTTP 与 WebSocket 集成验证入口
 mod admin;
 mod credential;
 mod oauth;
@@ -18,3 +18,4 @@ mod feedback;
 mod quota;
 
 mod images;
+mod transport;

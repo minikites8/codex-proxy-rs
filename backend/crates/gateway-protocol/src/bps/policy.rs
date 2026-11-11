@@ -50,6 +50,13 @@ pub(super) fn normalize_input(
             "Basispoints cannot read a new encrypted agent assignment. Resend its original plaintext task.",
         ));
     }
+    // 目录已由 ToolCatalog 读取，不能把 Responses Lite 的工具声明当作对话发给 BPS
+    input.retain(|item| {
+        !matches!(
+            item.get("type").and_then(Value::as_str),
+            Some("additional_tools" | "tool_search_output")
+        )
+    });
     for item in input.iter_mut() {
         let kind = item
             .get("type")

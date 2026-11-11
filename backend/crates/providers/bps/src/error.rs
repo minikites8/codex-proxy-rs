@@ -2,7 +2,7 @@
 
 use gateway_admin::ports::provider::{ProviderAdminError, ProviderAdminErrorKind};
 use gateway_core::{
-    error::{ClientVisibleUpstreamError, ProviderError, ProviderErrorKind},
+    error::{ClientVisibleUpstreamError, ProviderDiagnostic, ProviderError, ProviderErrorKind},
     upstream::UpstreamSendState,
 };
 
@@ -92,6 +92,10 @@ impl BpsError {
         }
         if let Self::Request(ref cause) = self {
             error = error
+                .with_diagnostic(
+                    ProviderDiagnostic::new(cause.message())
+                        .with_classification("bps_request_prepare", "basispoints_request_invalid"),
+                )
                 .with_client_visible_upstream_error(ClientVisibleUpstreamError::new(
                     cause.message(),
                     Some("basispoints_request_invalid".into()),
@@ -100,9 +104,15 @@ impl BpsError {
                 .with_retry_prohibited();
         }
         if matches!(self, Self::InvalidImage) {
+            const MESSAGE: &str =
+                "Invalid or unsupported Basispoints image format, reference, or size.";
             error = error
+                .with_diagnostic(
+                    ProviderDiagnostic::new(MESSAGE)
+                        .with_classification("bps_request_prepare", "basispoints_image_invalid"),
+                )
                 .with_client_visible_upstream_error(ClientVisibleUpstreamError::new(
-                    "Invalid or unsupported Basispoints image format, reference, or size.",
+                    MESSAGE,
                     Some("basispoints_image_invalid".into()),
                     Some("invalid_request_error".into()),
                 ))

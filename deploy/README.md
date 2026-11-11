@@ -46,19 +46,23 @@ BPS 授权独立于 Codex 授权，不能通过更改客户端标识转换已有
 套餐随 Excel OAuth 身份提取，额度通过 ChatGPT WHAM 查询及 BPS 响应头更新；上游未提供的数据保留未知
 更改服务地址会影响凭据与请求的发送目标，只应使用受信服务地址
 
-BPS 图片输入和兼容策略在 `deploy/config.yaml` 的 `bps` 节点配置，作用于全部 BPS 账号，修改后重启应用：
+BPS 传输、图片输入和兼容策略在 `deploy/config.yaml` 的 `bps` 节点配置，作用于全部 BPS 账号，修改后重启应用：
 
 ```yaml
 bps:
+  upstream_transport: ws
   image_input_enabled: true
   omit_images_when_disabled: false
   omit_unsupported_hosted_tools: false
   ignore_encrypted_history: false
 ```
 
-以上为默认值。`image_input_enabled` 关闭时拒绝图片；同时开启 `omit_images_when_disabled` 才替换为占位提示
-`omit_unsupported_hosted_tools` 允许省略不支持的托管工具声明，`ignore_encrypted_history` 允许以占位替换密文历史
-两者均保留其余明文与客户端工具，不代表对应能力可用
+以上为默认值。`upstream_transport` 可设为 `ws` 或 `sse`；WS 失败不自动切换 SSE，需要时显式修改配置
+`image_input_enabled` 关闭时拒绝图片；同时开启 `omit_images_when_disabled` 才替换为占位提示
+Codex 请求携带 `web_search`、`image_generation` 等托管工具时，需将 `omit_unsupported_hosted_tools` 设为 `true`，
+允许省略这些 BPS 不支持的声明；未开启时返回 400，管理端简单连接测试不验证这些客户端能力
+若需要复用其他通道的加密历史，可将 `ignore_encrypted_history` 设为 `true`，以明确占位保留可读取上下文
+两者均保留明文与客户端工具，不代表托管工具或密文历史可用，也不影响已开启的图片输入
 
 ### 部署时区
 

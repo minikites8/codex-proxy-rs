@@ -13,9 +13,10 @@ mod pricing;
 mod provider;
 mod quota;
 mod stream;
+mod transport;
 mod workers;
 
-pub use config::BpsConfig;
+pub use config::{BpsConfig, BpsUpstreamTransport};
 pub use error::BpsError;
 
 use gateway_admin::ports::provider::ProviderAdmin;

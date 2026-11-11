@@ -1,4 +1,4 @@
-//! 上游认证与限流失败通过已有端口回灌账号事实
+//! 上游认证、临时封禁与限流失败通过已有端口回灌账号事实
 
 use crate::provider::BpsProvider;
 use gateway_core::{
@@ -8,6 +8,9 @@ use gateway_core::{
     provider_ports::ProviderCooldown,
 };
 use std::time::{Duration, SystemTime};
+
+// BPS 生成权限拒绝按账号暂时封禁处理，冷却期间保留凭据
+const FORBIDDEN_COOLDOWN: Duration = Duration::from_secs(6 * 60 * 60);
 
 impl BpsProvider {
     pub(crate) async fn record_failure(
@@ -38,9 +41,13 @@ impl BpsProvider {
                 })
                 .await
                 .map_err(|_| ()),
-            ProviderErrorKind::RateLimited => {
-                // 参考相邻 Provider 的短暂退避；429 不足以证明额度耗尽或凭据失效
-                let delay = retry_after.unwrap_or(Duration::from_secs(120));
+            ProviderErrorKind::RateLimited | ProviderErrorKind::PermissionDenied => {
+                let delay = if kind == ProviderErrorKind::PermissionDenied {
+                    FORBIDDEN_COOLDOWN
+                } else {
+                    // 429 不足以证明额度耗尽或凭据失效，沿用已有短暂退避
+                    retry_after.unwrap_or(Duration::from_secs(120))
+                };
                 let Some(until) = now.checked_add(delay) else {
                     return;
                 };

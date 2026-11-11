@@ -759,12 +759,19 @@ xAI 的 `reasoning.effort` 接受 `none / minimal / low / medium / high / xhigh 
 
 #### BPS 适配
 
-BPS 使用独立 Excel OAuth 账号，以 HTTP SSE 请求 Basispoints；Responses、Chat Completions 和
+BPS 使用独立 Excel OAuth 账号，默认通过 WebSocket 请求 Basispoints，也可配置 HTTP SSE；Responses、Chat Completions 和
 Messages 入口复用生成链。模型目录来自各账号的实际访问权限，目录读取失败不视为模型撤回
+
+两种上游传输共用图片附件、工具回放和响应转换；客户端可继续使用 HTTP JSON、SSE 或 Responses WebSocket
+BPS 上游 WS 每轮建立独立连接，终态或请求取消后释放，不复用连接或自动断线重放；心跳、resume token 和回放游标不作为客户端响应交付
 
 客户端 function、custom 和 namespace 工具通过 `run_officejs` 信封中继，代理不执行 Office 代码
 整批工具仅在成功终态通过目录、参数 Schema 和调用标识校验后交付，失败仍保留上游错误及实际用量
 工具回放按账号、Client Key 和会话隔离；缓存失效时需要提供完整调用与结果历史
+
+Responses Lite 的 `input[].additional_tools` 和 `input[].tool_search_output` 读取为客户端工具目录，声明项不发送为 BPS 对话
+当轮顶层声明优先；历史同名声明采用最后一次定义，并按最终选中的 Schema 校验调用
+`configuration_update`、`item_reference` 和 `compaction_trigger` 返回明确的能力错误，不静默丢弃历史或控制指令
 
 当前适配支持文本、推理、客户端工具和图片输入，不提供独立图片生成 API、托管工具执行、结构化输出或 `previous_response_id` 续接
 `tool_choice` 支持 `auto`、`none`，`service_tier` 支持 `auto`、`default`
@@ -784,7 +791,8 @@ Messages 入口复用生成链。模型目录来自各账号的实际访问权�
 
 占位不会执行被省略的能力，也不恢复被省略的内容
 
-生成请求明确返回 401 时将对应凭据版本标为过期，需要手工刷新或重新授权；429 写入账号冷却，不把工具转换失败记为账号失败
+生成请求明确返回 401 时将对应凭据版本标为过期，需要手工刷新或重新授权
+403、WS `request_rejected` 或流内明确的权限拒绝将账号冷却 6 小时，保留凭据；429 沿用限流冷却，不把工具转换失败记为账号失败
 Refresh Token 交换结果不明确时停止自动复用该 Token，需要重新授权
 BPS 不套用同名 Codex 模型单价，只有显式配置单价且计量完整时计算费用，否则保持未知
 

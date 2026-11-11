@@ -78,6 +78,14 @@ api:
   request_timeout_seconds: null
   request_id_header: 'x-request-id'
 
+bps:
+  # BPS 生成默认使用独立 WebSocket；可改为 sse 使用 HTTP 与 SSE。
+  upstream_transport: ws
+  image_input_enabled: true
+  omit_images_when_disabled: false
+  omit_unsupported_hosted_tools: false
+  ignore_encrypted_history: false
+
 openai:
   # 以下两项原样发送配置值；省略或设为 null 时删除对应请求头
   # 数据驻留参考值：us

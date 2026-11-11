@@ -59,3 +59,26 @@ fn rejects_capabilities_that_cannot_be_preserved() {
         assert!(!error.to_string().contains("secret"));
     }
 }
+
+#[test]
+fn unsupported_history_controls_report_the_specific_capability_without_dropping_it() {
+    for kind in [
+        "configuration_update",
+        "item_reference",
+        "compaction_trigger",
+    ] {
+        let result = BpsRequest::prepare(
+            &json!({"input":[{"role":"user","content":"PRIVATE_TASK"},{"type":kind,"reasoning":{"effort":"high"}}]}),
+            "model",
+            RequestIdentity {
+                task_id: "t".into(),
+                turn_id: "r".into(),
+                prompt_cache_key: None,
+            },
+            &[],
+        );
+        let error = result.unwrap_err();
+        assert!(error.message().contains(kind));
+        assert!(!error.message().contains("PRIVATE_TASK"));
+    }
+}

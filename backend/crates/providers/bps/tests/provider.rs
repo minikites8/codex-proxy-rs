@@ -158,6 +158,7 @@ impl Fixture {
         let provider = provider_bps::initialize(
             provider_bps::BpsConfig {
                 base_url: server.uri(),
+                upstream_transport: provider_bps::BpsUpstreamTransport::Sse,
                 auth_base_url: server.uri(),
                 quota_base_url: server.uri(),
                 ..Default::default()
@@ -197,15 +198,11 @@ impl Fixture {
         ))
     }
     fn request(&self) -> ProviderRequest {
+        self.request_with_source(json!({"model":"model","input":"hello"}))
+    }
+    fn request_with_source(&self, source: serde_json::Value) -> ProviderRequest {
         let operation = Operation::Generate(GenerateRequest::from_protocol_payload(
-            ProtocolPayload::json_object(
-                "openai",
-                json!({"model":"model","input":"hello"})
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-            )
-            .unwrap(),
+            ProtocolPayload::json_object("openai", source.as_object().unwrap().clone()).unwrap(),
         ));
         let kind = ProviderKind::new("bps").unwrap();
         let snapshot = RuntimeSnapshot::new(
@@ -215,7 +212,19 @@ impl Fixture {
             vec![ProviderModel::new(
                 kind,
                 UpstreamModelId::new("model").unwrap(),
-                ModelCapabilities::new(BTreeSet::from([OperationKind::Generate]), None),
+                ModelCapabilities::new(BTreeSet::from([OperationKind::Generate]), None)
+                    .with_feature(
+                        gateway_core::operation::Feature::Tools,
+                        gateway_core::routing::SupportLevel::Emulated,
+                    )
+                    .with_feature(
+                        gateway_core::operation::Feature::Vision,
+                        gateway_core::routing::SupportLevel::Native,
+                    )
+                    .with_feature(
+                        gateway_core::operation::Feature::Reasoning,
+                        gateway_core::routing::SupportLevel::Native,
+                    ),
             )],
             vec![],
         )
@@ -258,6 +267,166 @@ fn queued_policy() -> AccountSelectionPolicy {
         max_waiting: 1,
         timeout: Duration::from_secs(2),
     })
+}
+
+#[tokio::test]
+async fn request_rejections_preserve_safe_reasons_in_management_diagnostics() {
+    let fixture = Fixture::new(Capacity::default()).await;
+    fixture.catalog(true).await;
+    for (patch, expected, code) in [
+        (
+            json!({"tools":[{"type":"web_search"}]}),
+            "Basispoints supports declared function and custom tools only.",
+            "basispoints_request_invalid",
+        ),
+        (
+            json!({"service_tier":"priority"}),
+            "Basispoints does not support the requested service tier.",
+            "basispoints_request_invalid",
+        ),
+        (
+            json!({"input":[{"role":"user","content":[{"type":"input_image","image_url":"http://example.com/PRIVATE_REQUEST_TEXT.png"}]}]}),
+            "Invalid or unsupported Basispoints image format, reference, or size.",
+            "basispoints_image_invalid",
+        ),
+    ] {
+        let mut source = json!({"model":"model","input":"PRIVATE_REQUEST_TEXT"});
+        source
+            .as_object_mut()
+            .unwrap()
+            .extend(patch.as_object().unwrap().clone());
+        let error = fixture
+            .provider
+            .clone()
+            .execute(
+                fixture.request_with_source(source),
+                fixture.context(fixture.scope(), policy(), CancellationToken::new()),
+            )
+            .await
+            .err()
+            .expect("unsupported capability must be rejected before sending");
+        assert_eq!(error.kind(), ProviderErrorKind::InvalidRequest);
+        assert_eq!(
+            error.send_state(),
+            gateway_core::upstream::UpstreamSendState::NotSent
+        );
+        let gateway = gateway_core::error::GatewayError::from_provider(&error);
+        assert_eq!(gateway.client_message(), expected);
+        let diagnostic = gateway
+            .diagnostic()
+            .expect("management history needs the same safe rejection reason");
+        assert_eq!(diagnostic.as_str(), expected);
+        assert_eq!(diagnostic.stage(), Some("bps_request_prepare"));
+        assert_eq!(diagnostic.code(), Some(code));
+        assert!(!diagnostic.as_str().contains("PRIVATE_REQUEST_TEXT"));
+        assert_eq!(fixture.capacity.active.load(Ordering::SeqCst), 0);
+    }
+    assert!(
+        fixture
+            .server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|request| request.url.path() != "/basispoints/api/responses")
+    );
+}
+
+#[tokio::test]
+async fn codex_compatibility_omits_hosted_tools_and_encrypted_history_but_keeps_images() {
+    use futures::StreamExt as _;
+
+    let fixture = Fixture::new(Capacity::default()).await;
+    fixture.catalog(true).await;
+    Mock::given(method("POST"))
+        .and(path("/basispoints/api/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!("data: {}\n\n", json!({"type":"response.completed","response":{"id":"resp_compat","status":"completed","output":[]}})),
+            "text/event-stream",
+        ))
+        .expect(1)
+        .mount(&fixture.server)
+        .await;
+    let provider = provider_bps::initialize(
+        provider_bps::BpsConfig {
+            base_url: fixture.server.uri(),
+            upstream_transport: provider_bps::BpsUpstreamTransport::Sse,
+            omit_unsupported_hosted_tools: true,
+            ignore_encrypted_history: true,
+            ..Default::default()
+        },
+        crate::support::ports_with_leases(fixture.accounts.clone(), fixture.capacity.clone()),
+    )
+    .unwrap()
+    .core_provider();
+    let source = json!({
+        "model":"model", "stream":true, "store":false,
+        "tool_choice":"auto", "parallel_tool_calls":true,
+        "reasoning":{"effort":"high"},
+        "tools":[
+            {"type":"web_search"},
+            {"type":"image_generation"},
+            {"type":"function","name":"exec_command","parameters":{"type":"object","properties":{}}}
+        ],
+        "input":[
+            {"type":"additional_tools","role":"developer","tools":[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"read_file","parameters":{"type":"object"}}]}]},
+            {"type":"tool_search_output","status":"completed","execution":"client","call_id":null,"tools":[{"type":"custom","name":"apply_patch"}]},
+            {"type":"reasoning","summary":[{"type":"summary_text","text":"Plaintext context"}],"encrypted_content":"PRIVATE_ENCRYPTED_HISTORY"},
+            {"role":"user","content":[{"type":"input_text","text":"Describe this image"},{"type":"input_image","image_url":"https://example.com/image.png"}]}
+        ]
+    });
+    let mut stream = provider
+        .execute(
+            fixture.request_with_source(source),
+            fixture.context(fixture.scope(), policy(), CancellationToken::new()),
+        )
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|request| request.url.path() != "/basispoints/api/responses")
+    );
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+    drop(stream);
+    let requests = fixture.server.received_requests().await.unwrap();
+    let generation = requests
+        .iter()
+        .find(|request| request.url.path() == "/basispoints/api/responses")
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&generation.body).unwrap();
+    let encoded = body.to_string();
+    assert!(encoded.contains("Hosted tools unavailable"));
+    assert!(encoded.contains("exec_command"));
+    assert!(encoded.contains("functions.read_file"));
+    assert!(encoded.contains("apply_patch"));
+    assert!(
+        body["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| !matches!(
+                item["type"].as_str(),
+                Some("additional_tools" | "tool_search_output")
+            ))
+    );
+    assert!(encoded.contains("Plaintext context"));
+    assert!(!encoded.contains("PRIVATE_ENCRYPTED_HISTORY"));
+    assert!(body["input"].as_array().unwrap().iter().any(|item| {
+        item["content"].as_array().is_some_and(|parts| {
+            parts.iter().any(|part| {
+                part["type"] == "input_image"
+                    && part["image_url"] == "https://example.com/image.png"
+            })
+        })
+    }));
+    assert_eq!(fixture.capacity.active.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -510,6 +679,7 @@ async fn model_cooldown_blocks_only_its_named_model() {
     let provider = provider_bps::initialize(
         provider_bps::BpsConfig {
             base_url: fixture.server.uri(),
+            upstream_transport: provider_bps::BpsUpstreamTransport::Sse,
             auth_base_url: fixture.server.uri(),
             quota_base_url: fixture.server.uri(),
             ..Default::default()
@@ -558,6 +728,7 @@ async fn model_cooldown_blocks_only_its_named_model() {
     let provider = provider_bps::initialize(
         provider_bps::BpsConfig {
             base_url: fixture.server.uri(),
+            upstream_transport: provider_bps::BpsUpstreamTransport::Sse,
             auth_base_url: fixture.server.uri(),
             quota_base_url: fixture.server.uri(),
             ..Default::default()

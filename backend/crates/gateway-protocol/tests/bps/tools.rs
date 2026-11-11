@@ -9,6 +9,117 @@ fn request() -> BpsRequest {
 }
 
 #[test]
+fn responses_lite_catalog_items_enable_namespaced_tools_without_leaking_into_history() {
+    for carrier in ["additional_tools", "tool_search_output"] {
+        let source = json!({"input":[
+            {"type":carrier,"role":"developer","status":"completed","execution":"server","call_id":null,
+             "tools":[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}]}]},
+            {"role":"user","content":"Read the file"}
+        ]});
+        let prepared = BpsRequest::prepare(
+            &source,
+            "model",
+            RequestIdentity {
+                task_id: "t".into(),
+                turn_id: "r".into(),
+                prompt_cache_key: None,
+            },
+            &[],
+        )
+        .unwrap();
+        assert!(
+            prepared.body()["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["type"] != carrier)
+        );
+        assert_eq!(
+            prepared.body()["input"].as_array().unwrap().last().unwrap()["content"],
+            "Read the file"
+        );
+        let mut bridge = BpsResponse::new(prepared);
+        let native = json!({"type":"function_call","call_id":"call_read","name":"run_officejs","arguments":json!({"code":json!({"name":"functions.read_file","arguments":{"path":"src/main.rs"}}).to_string()}).to_string()});
+        let events = bridge.event(json!({"type":"response.completed","response":{"id":"resp_lite","output":[native]}})).unwrap();
+        let call = &events.last().unwrap()["response"]["output"][0];
+        assert_eq!(call["name"], "read_file");
+        assert_eq!(call["namespace"], "functions");
+    }
+}
+
+#[test]
+fn current_catalog_wins_and_only_the_latest_selected_historical_schema_is_validated() {
+    let current = json!({"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}});
+    let obsolete = json!({"type":"function","name":"read_file","parameters":{"$ref":"https://example.invalid/obsolete"}});
+    for explicit in [true, false] {
+        let mut source = json!({"input":[{"type":"additional_tools","tools":[obsolete.clone()]},{"type":"tool_search_output","tools":[current.clone()]},{"role":"user","content":"Read"}]});
+        if explicit {
+            source["tools"] = json!([current.clone()]);
+            source["input"][1]["tools"] = json!([obsolete.clone()]);
+        }
+        for (path, accepted) in [(json!("file.rs"), true), (json!(3), false)] {
+            let prepared = BpsRequest::prepare(
+                &source,
+                "model",
+                RequestIdentity {
+                    task_id: "t".into(),
+                    turn_id: "r".into(),
+                    prompt_cache_key: None,
+                },
+                &[],
+            )
+            .unwrap();
+            let mut bridge = BpsResponse::new(prepared);
+            let native = json!({"type":"function_call","call_id":"call_read","name":"run_officejs","arguments":json!({"code":json!({"name":"read_file","arguments":{"path":path}}).to_string()}).to_string()});
+            assert_eq!(
+                bridge
+                    .event(json!({"type":"response.completed","response":{"output":[native]}}))
+                    .is_ok(),
+                accepted
+            );
+        }
+    }
+}
+
+#[test]
+fn history_catalogs_preserve_choice_none_and_reject_invalid_selected_declarations() {
+    let identity = || RequestIdentity {
+        task_id: "t".into(),
+        turn_id: "r".into(),
+        prompt_cache_key: None,
+    };
+    let mut source = json!({"tool_choice":"none","input":[{"type":"additional_tools","tools":[{"type":"function","name":"shell"}]},{"type":"tool_search_output","tools":[]},{"role":"user","content":"Read"}]});
+    let prepared = BpsRequest::prepare(&source, "model", identity(), &[]).unwrap();
+    assert!(
+        prepared.body()["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| !matches!(
+                item["type"].as_str(),
+                Some("additional_tools" | "tool_search_output")
+            ))
+    );
+    let mut bridge = BpsResponse::new(prepared);
+    let native = json!({"type":"function_call","call_id":"call_read","name":"run_officejs","arguments":json!({"code":json!({"name":"shell","arguments":{}}).to_string()}).to_string()});
+    assert!(
+        bridge
+            .event(json!({"type":"response.completed","response":{"output":[native]}}))
+            .is_err()
+    );
+    source.as_object_mut().unwrap().remove("tool_choice");
+    for tools in [
+        json!(null),
+        json!({}),
+        json!([{"type":"function","name":"shell","parameters":"invalid-schema"}]),
+        json!([{"type":"function","name":"shell"},{"type":"function","name":"shell"}]),
+    ] {
+        source["input"][0]["tools"] = tools;
+        assert!(BpsRequest::prepare(&source, "model", identity(), &[]).is_err());
+    }
+}
+
+#[test]
 fn tool_batch_is_validated_before_any_call_is_delivered() {
     let mut bridge = BpsResponse::new(request());
     let native = |name: &str| {

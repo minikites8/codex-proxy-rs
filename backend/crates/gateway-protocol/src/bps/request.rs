@@ -146,6 +146,21 @@ impl BpsRequest {
                     validate_content(item.get("output"), policy.images, true)?
                 }
                 "function_call" | "reasoning" | "compaction" => {}
+                "configuration_update" => {
+                    return Err(BpsProtocolError(
+                        "Basispoints does not support configuration_update history. Start a new conversation with the desired reasoning effort.",
+                    ));
+                }
+                "item_reference" => {
+                    return Err(BpsProtocolError(
+                        "Basispoints requires complete history instead of item_reference.",
+                    ));
+                }
+                "compaction_trigger" => {
+                    return Err(BpsProtocolError(
+                        "Basispoints does not support compaction_trigger requests through this endpoint.",
+                    ));
+                }
                 _ => {
                     return Err(BpsProtocolError(
                         "Unsupported Basispoints history item. Resend complete plaintext history.",

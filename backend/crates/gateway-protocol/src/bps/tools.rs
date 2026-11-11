@@ -31,6 +31,11 @@ struct Tool {
     validator: Option<jsonschema::Validator>,
 }
 
+struct HistoryDeclaration<'a> {
+    namespace: Option<String>,
+    definition: &'a Value,
+}
+
 #[derive(Default)]
 pub(super) struct ToolCatalog(BTreeMap<String, Tool>, BTreeSet<String>);
 
@@ -43,6 +48,32 @@ impl ToolCatalog {
         for field in ["tools", "additional_tools"] {
             if let Some(value) = source.get(field) {
                 catalog.collect(value, None, omit_hosted)?;
+            }
+        }
+        let mut historical = BTreeMap::new();
+        for item in source
+            .get("input")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if matches!(
+                item.get("type").and_then(Value::as_str),
+                Some("additional_tools" | "tool_search_output")
+            ) {
+                let mut declarations = BTreeMap::new();
+                history_declarations(item.get("tools"), None, &mut declarations)?;
+                historical.extend(declarations);
+            }
+        }
+        // 当轮显式目录优先，历史目录采用最后一次声明，只校验最终选中的 Schema
+        for (name, declaration) in historical {
+            if !catalog.0.contains_key(&name) {
+                catalog.collect(
+                    &Value::Array(vec![declaration.definition.clone()]),
+                    declaration.namespace.as_deref(),
+                    omit_hosted,
+                )?;
             }
         }
         Ok(catalog)
@@ -62,22 +93,7 @@ impl ToolCatalog {
                 .get("type")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if omit_hosted
-                && matches!(
-                    kind,
-                    "web_search"
-                        | "web_search_preview"
-                        | "web_search_preview_2025_03_11"
-                        | "web_search_2025_08_26"
-                        | "tool_search"
-                        | "image_generation"
-                        | "file_search"
-                        | "code_interpreter"
-                        | "computer"
-                        | "computer_use_preview"
-                        | "mcp"
-                )
-            {
+            if omit_hosted && is_hosted_tool_kind(kind) {
                 self.1.insert(kind.into());
                 continue;
             }
@@ -350,6 +366,78 @@ impl ToolCatalog {
         }
         Ok(replays)
     }
+}
+
+fn history_declarations<'a>(
+    value: Option<&'a Value>,
+    namespace: Option<&str>,
+    selected: &mut BTreeMap<String, HistoryDeclaration<'a>>,
+) -> Result<(), BpsProtocolError> {
+    let tools = value.and_then(Value::as_array).ok_or(BpsProtocolError(
+        "Invalid Basispoints historical tool catalog.",
+    ))?;
+    for definition in tools {
+        let kind = definition
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if is_hosted_tool_kind(kind) {
+            selected.insert(
+                format!("hosted:{kind}"),
+                HistoryDeclaration {
+                    namespace: namespace.map(str::to_owned),
+                    definition,
+                },
+            );
+            continue;
+        }
+        let name = definition
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty());
+        let qualified = name.map(|name| {
+            namespace.map_or_else(
+                || name.to_owned(),
+                |namespace| format!("{namespace}.{name}"),
+            )
+        });
+        if kind == "namespace" {
+            let qualified = qualified.ok_or(BpsProtocolError("Invalid tool namespace."))?;
+            history_declarations(definition.get("tools"), Some(&qualified), selected)?;
+            continue;
+        }
+        let key = qualified.unwrap_or_else(|| format!("hosted:{kind}"));
+        if selected
+            .insert(
+                key,
+                HistoryDeclaration {
+                    namespace: namespace.map(str::to_owned),
+                    definition,
+                },
+            )
+            .is_some()
+        {
+            return Err(BpsProtocolError("Duplicate Basispoints tool name."));
+        }
+    }
+    Ok(())
+}
+
+fn is_hosted_tool_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "web_search"
+            | "web_search_preview"
+            | "web_search_preview_2025_03_11"
+            | "web_search_2025_08_26"
+            | "tool_search"
+            | "image_generation"
+            | "file_search"
+            | "code_interpreter"
+            | "computer"
+            | "computer_use_preview"
+            | "mcp"
+    )
 }
 
 fn call_id(item: &Value) -> Result<&str, BpsProtocolError> {

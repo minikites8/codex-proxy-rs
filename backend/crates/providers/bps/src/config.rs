@@ -8,10 +8,23 @@ pub(crate) const PROVIDER: &str = "bps";
 pub(crate) const CLIENT_ID: &str = "app_fnr0pYvVwwFDocDumLG3H2Bp";
 pub(crate) const REDIRECT_URI: &str = "https://bps.openai.com/basispoints/extension/360590d7-f8f9-4d88-bf75-0edfe0a4b9f3/auth/callback";
 
+/// BPS 生成请求使用的上游传输
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BpsUpstreamTransport {
+    /// 每轮建立独立 WebSocket，不自动恢复或重放
+    #[default]
+    Ws,
+    /// HTTP 请求与 SSE 响应
+    Sse,
+}
+
 /// BPS 服务地址；账号代理由既有账号配置决定
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct BpsConfig {
+    /// 生成传输，默认使用 WebSocket
+    pub upstream_transport: BpsUpstreamTransport,
     /// BPS 服务根地址
     pub base_url: String,
     /// OAuth 服务根地址
@@ -31,6 +44,7 @@ pub struct BpsConfig {
 impl Default for BpsConfig {
     fn default() -> Self {
         Self {
+            upstream_transport: BpsUpstreamTransport::Ws,
             base_url: "https://bps.openai.com/".into(),
             auth_base_url: "https://auth.openai.com/".into(),
             quota_base_url: "https://chatgpt.com/".into(),

@@ -1,11 +1,12 @@
-//! BPS HTTP SSE 冷流、调用回放与规范化用量观测
+//! BPS 生成冷流、调用回放与规范化用量观测
 
 use crate::{
-    BpsError,
+    BpsError, BpsUpstreamTransport,
     credential::Credential,
     images::ImagePlan,
     network,
     provider::{BpsProvider, ReplayEntry},
+    transport,
 };
 use futures::StreamExt;
 use gateway_core::{
@@ -27,7 +28,7 @@ use gateway_core::{
 };
 use gateway_protocol::{
     bps::{BpsRequest, BpsResponse, RequestIdentity, ToolReplay},
-    openai::{OPENAI_PROTOCOL, sse::SseEventDecoder},
+    openai::OPENAI_PROTOCOL,
 };
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -127,7 +128,11 @@ impl BpsProvider {
             self.kind.clone(),
             model.clone(),
             account.id().clone(),
-            UpstreamTransport::new("http_sse").expect("static transport name"),
+            UpstreamTransport::new(match self.config.upstream_transport {
+                BpsUpstreamTransport::Ws => "websocket",
+                BpsUpstreamTransport::Sse => "http_sse",
+            })
+            .expect("static transport name"),
         )
         .with_selection_observation(selection)
         .with_credential_revision(account.revision())
@@ -139,72 +144,113 @@ impl BpsProvider {
             .and_then(|models| models.get(model.as_str()))
             .cloned();
         let stream = async_stream::try_stream! {
-            // execute 只准备账号与租约，实际 HTTP 发送发生在首次 poll 之后
-            let prepared=if let Some(plan)=image_plan.filter(ImagePlan::has_uploads) {
-                let uploaded=plan.upload(&self,&account,&context,&model).await?;
-                BpsRequest::prepare_with_policy(&uploaded,model.as_str(),identity,&replays,policy)
-                    .map_err(|error|BpsError::from(error).execution(UpstreamSendState::NotSent).with_retry_prohibited())?
-            }else{prepared};
-            let body=prepared.body().clone();
-            let mut bridge=BpsResponse::new(prepared);
-            let mut request=client.post(url).header("Accept","text/event-stream").json(&body);
-            for header in &headers {
-                if !matches!(header.name().to_ascii_lowercase().as_str(),"authorization"|"host"|"content-length"|"chatgpt-account-id"|"x-openai-account-id") {
-                    request=request.header(header.name(),header.value().as_ref());
-                }
-            }
-            let request=network::authenticate(request,&credential).build().map_err(|_|BpsError::Protocol.execution(UpstreamSendState::NotSent))?;
-            let request=network::prepare_outbound_request(&client,request,&context,&self.kind,&model,&account).await?;
-            let quota_observed_at=SystemTime::now();
-            let response=client.execute(request).await.map_err(|error| {
-                let state=if error.is_connect(){UpstreamSendState::NotSent}else{UpstreamSendState::Ambiguous};
-                ProviderError::new(ProviderErrorKind::Transport,state)
-            })?;
+            // execute 只准备账号与租约，实际发送发生在首次 poll 之后
+            let prepared = if let Some(plan) = image_plan.filter(ImagePlan::has_uploads) {
+                let uploaded = plan.upload(&self, &account, &context, &model).await?;
+                BpsRequest::prepare_with_policy(
+                    &uploaded,
+                    model.as_str(),
+                    identity,
+                    &replays,
+                    policy,
+                )
+                .map_err(|error| {
+                    BpsError::from(error)
+                        .execution(UpstreamSendState::NotSent)
+                        .with_retry_prohibited()
+                })?
+            } else {
+                prepared
+            };
+            let body = prepared.body().clone();
+            let mut bridge = BpsResponse::new(prepared);
+            let request = transport::GenerationRequest {
+                client: &client,
+                url,
+                transport: self.config.upstream_transport,
+                body,
+                headers: &headers,
+                credential: &credential,
+                context: &context,
+                provider: &self.kind,
+                model: &model,
+                account: &account,
+            };
+            let transport::Opening { response, payload } = request.open().await?;
+            let quota_observed_at = SystemTime::now();
             // 额度头在流消费前落库，正文失败也不能丢失已经收到的明确额度事实
-            if context.account_eligibility().allows_account_state_mutation(account.enabled()) {
-                match tokio::time::timeout(Duration::from_secs(2),self.observe_quota_headers(&account,response.headers(),quota_observed_at)).await {
-                    Ok(Ok(()))=>{},
-                    _=>tracing::warn!(provider="bps",stage="quota_observation","BPS quota observation could not be persisted"),
+            if context
+                .account_eligibility()
+                .allows_account_state_mutation(account.enabled())
+            {
+                match tokio::time::timeout(
+                    Duration::from_secs(2),
+                    self.observe_quota_headers(&account, response.headers(), quota_observed_at),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    _ => tracing::warn!(
+                        provider = "bps",
+                        stage = "quota_observation",
+                        "BPS quota observation could not be persisted"
+                    ),
                 }
             }
-            let status=response.status();
-            let response = if !status.is_success() {
-                let retry_after=response.headers().get(reqwest::header::RETRY_AFTER).and_then(|value|value.to_str().ok()).and_then(gateway_protocol::openai::parse_retry_after_seconds).map(Duration::from_secs);
-                let content_type=response.headers().get(reqwest::header::CONTENT_TYPE).map(|value|value.as_bytes().to_vec());
-                let body=read_error_body(response).await?;
-                let usage=serde_json::from_slice::<Value>(&body).ok().and_then(|value|response_usage(&value));
-                let mut error=BpsError::Upstream(status.as_u16()).execution(UpstreamSendState::Sent)
-                    .with_client_visible_upstream_response(ClientVisibleUpstreamResponse::new(status.as_u16(),content_type,body));
-                if let Some(usage)=usage {error=error.with_atomic_client_events(vec![ProviderEvent::canonical(GatewayEvent::Usage(usage))]);}
-                if let Some(delay)=retry_after {error=error.with_retry_after(delay);}
-                self.record_failure(&account,&context,error.kind(),retry_after).await;
-                Err::<reqwest::Response,_>(error)?
-            } else { response };
-            let mut bytes=response.bytes_stream();
-            let mut decoder=SseEventDecoder::default();
-            let mut canonical=Canonical::new(model.as_str().into(),pricing);
-            let mut terminal=false;
-            let mut drained=false;
-            loop {
-                let events=match bytes.next().await {
-                    Some(chunk)=> {
-                        let chunk=chunk.map_err(|_|ProviderError::new(ProviderErrorKind::Transport,UpstreamSendState::Sent))?;
-                        decoder.push(&chunk)
+            let status = response.status();
+            let response =
+                if !status.is_success() && !(payload.is_some() && status == reqwest::StatusCode::SWITCHING_PROTOCOLS) {
+                    let retry_after = response
+                        .headers()
+                        .get(reqwest::header::RETRY_AFTER)
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(gateway_protocol::openai::parse_retry_after_seconds)
+                        .map(Duration::from_secs);
+                    let content_type = response
+                        .headers()
+                        .get(reqwest::header::CONTENT_TYPE)
+                        .map(|value| value.as_bytes().to_vec());
+                    let state = if payload.is_some() { UpstreamSendState::NotSent } else { UpstreamSendState::Sent };
+                    let body = read_error_body(response, state).await?;
+                    let usage = serde_json::from_slice::<Value>(&body)
+                        .ok()
+                        .and_then(|value| response_usage(&value));
+                    let mut error = BpsError::Upstream(status.as_u16())
+                        .execution(state)
+                        .with_client_visible_upstream_response(ClientVisibleUpstreamResponse::new(
+                            status.as_u16(),
+                            content_type,
+                            body,
+                        ));
+                    if let Some(usage) = usage {
+                        error = error.with_atomic_client_events(vec![ProviderEvent::canonical(
+                            GatewayEvent::Usage(usage),
+                        )]);
                     }
-                    None=>{drained=true;decoder.finish()}
-                }.map_err(|_|BpsError::Protocol.execution(UpstreamSendState::Sent))?;
-                for event in events {
-                    if event.data=="[DONE]" {continue;}
-                    let value:Value=serde_json::from_str(&event.data).map_err(|_|BpsError::Protocol.execution(UpstreamSendState::Sent))?;
+                    if let Some(delay) = retry_after {
+                        error = error.with_retry_after(delay);
+                    }
+                    self.record_failure(&account, &context, error.kind(), retry_after)
+                        .await;
+                    Err::<reqwest::Response, _>(error)?
+                } else {
+                    response
+                };
+            let mut upstream = transport::events(response, payload, context.clone()).await?;
+            let mut canonical = Canonical::new(model.as_str().into(), pricing);
+            let mut terminal = false;
+            while let Some(value) = upstream.next().await {
+                let value = value?;
                     let failed=matches!(value.get("type").and_then(Value::as_str),Some("error"|"response.failed"|"response.cancelled"))
                         || (value.get("type").and_then(Value::as_str)==Some("response.completed") && (matches!(value.pointer("/response/status").and_then(Value::as_str),Some("failed"|"cancelled")) || value.pointer("/response/error").is_some_and(|error|!error.is_null())));
                     let events=if failed {
-                        let kind=stream_failure_kind(&value);
+                        let (kind,status)=stream_failure(&value);
                         let retry_after=value.pointer("/response/error/headers/retry-after").or_else(||value.pointer("/error/headers/retry-after")).and_then(Value::as_str).and_then(gateway_protocol::openai::parse_retry_after_seconds).map(Duration::from_secs);
                         self.record_failure(&account,&context,kind,retry_after).await;
                         let value=bridge.event(value).map_err(|_|BpsError::Protocol.execution(UpstreamSendState::Sent))?.pop().ok_or_else(||BpsError::Protocol.execution(UpstreamSendState::Sent))?;
                         let facts=canonical.event(value)?;
                         let mut error=ProviderError::new(kind,UpstreamSendState::Sent).with_atomic_client_events(vec![facts]).with_retry_prohibited();
+                        if let Some(status)=status {error=error.with_status(status);}
                         if let Some(delay)=retry_after {error=error.with_retry_after(delay);}
                         Err::<Vec<Value>,_>(error)?
                     } else {
@@ -219,8 +265,6 @@ impl BpsProvider {
                     if bridge.is_terminal() {self.remember(&scope,bridge.replays());terminal=true;}
                     for event in events {yield canonical.event(event)?;}
                     if terminal {break;}
-                }
-                if terminal || drained {break;}
             }
             if !terminal {Err(BpsError::Protocol.execution(UpstreamSendState::Sent))?;}
             drop(context);
@@ -472,15 +516,18 @@ impl NativeResponseTranslator for MessagesTranslator {
     }
 }
 
-async fn read_error_body(mut response: reqwest::Response) -> Result<bytes::Bytes, ProviderError> {
+async fn read_error_body(
+    mut response: reqwest::Response,
+    state: UpstreamSendState,
+) -> Result<bytes::Bytes, ProviderError> {
     let mut body = Vec::new();
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|_| BpsError::Protocol.execution(UpstreamSendState::Sent))?
+        .map_err(|_| BpsError::Protocol.execution(state))?
     {
         if body.len().saturating_add(chunk.len()) > 16 * 1024 * 1024 {
-            return Err(BpsError::Protocol.execution(UpstreamSendState::Sent));
+            return Err(BpsError::Protocol.execution(state));
         }
         body.extend_from_slice(&chunk);
     }
@@ -528,27 +575,40 @@ fn score_upstream_failure(error: &ProviderError) -> bool {
 }
 
 // 只使用明确错误标识或错误对象的状态，不把消息文本推断成认证失效
-fn stream_failure_kind(event: &Value) -> ProviderErrorKind {
+fn stream_failure(event: &Value) -> (ProviderErrorKind, Option<u16>) {
     let detail = event
         .pointer("/response/error")
         .or_else(|| event.get("error"))
         .unwrap_or(event);
+    let status = detail
+        .get("status")
+        .or_else(|| event.get("status"))
+        .and_then(Value::as_u64)
+        .and_then(|status| u16::try_from(status).ok());
     let identifier = detail
         .get("code")
         .or_else(|| detail.get("type"))
         .and_then(Value::as_str)
         .unwrap_or_default();
-    match identifier {
-        "rate_limit_exceeded" | "rate_limit_error" => ProviderErrorKind::RateLimited,
-        "usage_limit_reached" | "insufficient_quota" => ProviderErrorKind::QuotaExhausted,
-        "unauthorized" | "invalid_api_key" | "authentication_error" => {
-            ProviderErrorKind::Unauthorized
+    let kind = if status == Some(403) {
+        ProviderErrorKind::PermissionDenied
+    } else {
+        match identifier {
+            "rate_limit_exceeded" | "rate_limit_error" => ProviderErrorKind::RateLimited,
+            "usage_limit_reached" | "insufficient_quota" => ProviderErrorKind::QuotaExhausted,
+            "unauthorized" | "invalid_api_key" | "authentication_error" => {
+                ProviderErrorKind::Unauthorized
+            }
+            // 实测同账号的 HTTP 403 在 BPS WS 中以 request_rejected 返回
+            "permission_error" | "permission_denied" | "request_rejected" => {
+                ProviderErrorKind::PermissionDenied
+            }
+            _ => match status {
+                Some(401) => ProviderErrorKind::Unauthorized,
+                Some(429) => ProviderErrorKind::RateLimited,
+                _ => ProviderErrorKind::Unavailable,
+            },
         }
-        "permission_error" | "permission_denied" => ProviderErrorKind::PermissionDenied,
-        _ => match detail.get("status").and_then(Value::as_u64) {
-            Some(401) => ProviderErrorKind::Unauthorized,
-            Some(429) => ProviderErrorKind::RateLimited,
-            _ => ProviderErrorKind::Unavailable,
-        },
-    }
+    };
+    (kind, status)
 }
