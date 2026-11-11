@@ -31,6 +31,9 @@ export function resolveAccountCreatePresentation(input: {
   else if (form.mode === 'refresh_token')
     description = t('accounts.onboarding.refreshTokenDescription')
 
+  if (id === 'bps' && !isBatch && form.mode !== 'oauth')
+    description = t('accounts.onboarding.bpsImportDescription')
+
   let canSubmit = available && !input.busy
   if (form.mode === 'oauth')
     canSubmit &&= Boolean(authorization.flow && input.callback.trim())
@@ -62,10 +65,14 @@ export function resolveAccountCreatePresentation(input: {
       callbackLabel: id === 'xai'
         ? t('accounts.onboarding.callbackLabel')
         : t('accounts.onboarding.callbackAddress'),
-      callbackPlaceholder: id === 'openai'
-        ? 'http://localhost:1455/auth/callback?code=...&state=...'
-        : t('accounts.onboarding.callbackPlaceholder'),
-      description: t('accounts.onboarding.callbackHelp'),
+      callbackPlaceholder: id === 'bps'
+        ? 'https://bps.openai.com/basispoints/extension/360590d7-f8f9-4d88-bf75-0edfe0a4b9f3/auth/callback?code=...&state=...'
+        : id === 'openai'
+          ? 'http://localhost:1455/auth/callback?code=...&state=...'
+          : t('accounts.onboarding.callbackPlaceholder'),
+      description: id === 'bps'
+        ? t('accounts.onboarding.bpsCallbackHelp')
+        : t('accounts.onboarding.callbackHelp'),
     },
     importInput: form.mode === 'access_token'
       ? {

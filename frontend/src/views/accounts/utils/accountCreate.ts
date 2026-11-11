@@ -92,7 +92,7 @@ export function accountImportModes(provider: string | undefined) {
       },
     ]
   }
-  if (provider === 'xai') {
+  if (provider === 'xai' || provider === 'bps') {
     return [
       { label: 'OAuth', value: 'oauth' as const },
       {

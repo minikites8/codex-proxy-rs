@@ -18,6 +18,8 @@ pub struct GatewayConfig {
     pub(super) api: gateway_api::ApiConfig,
     #[serde(default)]
     pub(super) openai: provider_openai::OpenAiConfig,
+    #[serde(default)]
+    pub(super) bps: provider_bps::BpsConfig,
 }
 
 impl LoadableConfig for GatewayConfig {

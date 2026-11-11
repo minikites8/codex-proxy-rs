@@ -12,6 +12,7 @@ name = "main"
 path = "tests/main.rs"
 
 [dependencies]
+jsonschema = { version = "0.60.2", default-features = false }
 http = "1.5.0"
 httpdate = "1.0.3"
 memchr = "2.8.3"

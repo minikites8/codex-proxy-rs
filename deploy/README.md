@@ -36,6 +36,30 @@
 
 Compose 通过环境变量将监听和数据库地址设为容器内地址，并指定镜像中的静态资源目录
 
+### BPS 连接
+
+管理端选择 BPS 平台，通过 Excel OAuth 登录或导入完整会话凭据，然后配置账号分组和调用密钥
+BPS 授权独立于 Codex 授权，不能通过更改客户端标识转换已有凭据
+
+`deploy/config.yaml` 可选配置 `bps.base_url`、`bps.auth_base_url` 和 `bps.quota_base_url`，默认分别为
+`https://bps.openai.com/`、`https://auth.openai.com/` 和 `https://chatgpt.com/`，账号出站代理沿用账号配置
+套餐随 Excel OAuth 身份提取，额度通过 ChatGPT WHAM 查询及 BPS 响应头更新；上游未提供的数据保留未知
+更改服务地址会影响凭据与请求的发送目标，只应使用受信服务地址
+
+BPS 图片输入和兼容策略在 `deploy/config.yaml` 的 `bps` 节点配置，作用于全部 BPS 账号，修改后重启应用：
+
+```yaml
+bps:
+  image_input_enabled: true
+  omit_images_when_disabled: false
+  omit_unsupported_hosted_tools: false
+  ignore_encrypted_history: false
+```
+
+以上为默认值。`image_input_enabled` 关闭时拒绝图片；同时开启 `omit_images_when_disabled` 才替换为占位提示
+`omit_unsupported_hosted_tools` 允许省略不支持的托管工具声明，`ignore_encrypted_history` 允许以占位替换密文历史
+两者均保留其余明文与客户端工具，不代表对应能力可用
+
 ### 部署时区
 
 在 `deploy/config.yaml` 设置统一的 IANA 时区，省略时默认 `Asia/Shanghai`：

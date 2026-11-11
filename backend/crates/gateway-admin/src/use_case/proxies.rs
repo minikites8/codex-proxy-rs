@@ -38,7 +38,7 @@ impl PluginProxyAccess for DefaultPluginProxyAccess {
         list_proxies(self.store.as_ref(), query).await
     }
 
-    async fn resolve(&self, id: &str) -> Result<OutboundProxy, AdminError> {
+    async fn get(&self, id: &str) -> Result<PluginProxyConnection, AdminError> {
         if id.is_empty() || id.len() > 128 || id.chars().any(char::is_control) {
             return Err(AdminError::invalid("代理 ID 不合法"));
         }
@@ -51,7 +51,11 @@ impl PluginProxyAccess for DefaultPluginProxyAccess {
         if !record.enabled {
             return Err(AdminError::invalid("代理已禁用，请启用后再选择"));
         }
-        Ok(record.proxy)
+        Ok(PluginProxyConnection {
+            id: record.id,
+            revision: record.revision,
+            proxy: record.proxy,
+        })
     }
 }
 

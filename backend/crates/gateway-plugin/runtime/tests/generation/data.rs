@@ -437,13 +437,22 @@ struct ProxyFacts {
 
 #[async_trait]
 impl gateway_admin::ports::proxy::PluginProxyAccess for ProxyFacts {
-    async fn resolve(&self, id: &str) -> Result<gateway_core::account::OutboundProxy, AdminError> {
+    async fn get(
+        &self,
+        id: &str,
+    ) -> Result<gateway_admin::model::proxies::PluginProxyConnection, AdminError> {
         assert_eq!(id, "proxy_login");
-        self.resolutions
+        let proxy = self
+            .resolutions
             .lock()
             .unwrap()
             .pop_front()
-            .expect("每次发送读取当前配置")
+            .expect("每次读取当前配置")?;
+        Ok(gateway_admin::model::proxies::PluginProxyConnection {
+            id: id.into(),
+            revision: Revision::new(2).unwrap(),
+            proxy,
+        })
     }
 
     async fn list(
@@ -684,4 +693,73 @@ async fn proxy_http_resolves_each_send_and_directory_only_exposes_selection_fact
             .unwrap()
             .unwrap();
     }
+}
+
+struct ProxyReads {
+    values: std::sync::Mutex<
+        std::collections::VecDeque<
+            Result<gateway_admin::model::proxies::PluginProxyConnection, AdminError>,
+        >,
+    >,
+}
+#[async_trait]
+impl gateway_admin::ports::proxy::PluginProxyAccess for ProxyReads {
+    async fn get(
+        &self,
+        id: &str,
+    ) -> Result<gateway_admin::model::proxies::PluginProxyConnection, AdminError> {
+        assert_eq!(id, "proxy_independent");
+        self.values
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("each get must read current facts")
+    }
+    async fn list(
+        &self,
+        _: gateway_admin::model::proxies::ProxyListQuery,
+    ) -> Result<gateway_admin::model::proxies::ProxyPage, AdminError> {
+        panic!("get does not list proxies")
+    }
+}
+
+#[tokio::test]
+async fn proxy_get_returns_current_connection_in_payload_without_an_account() {
+    use gateway_admin::model::proxies::PluginProxyConnection;
+    use gateway_core::account::OutboundProxy;
+    let proxies = Arc::new(ProxyReads {
+        values: std::sync::Mutex::new(std::collections::VecDeque::from([
+            Ok(PluginProxyConnection {
+                id: "proxy_independent".into(),
+                revision: Revision::new(5).unwrap(),
+                proxy: OutboundProxy::parse("http://user:first@proxy.example:8080").unwrap(),
+            }),
+            Ok(PluginProxyConnection {
+                id: "proxy_independent".into(),
+                revision: Revision::new(6).unwrap(),
+                proxy: OutboundProxy::parse("socks5://user:second@proxy.example:1080").unwrap(),
+            }),
+            Err(AdminError::not_found("proxy")),
+            Err(AdminError::invalid("代理已禁用")),
+        ])),
+    });
+    let query = json!({"method":"host.proxies.get","query":{"proxy_id":"proxy_independent"}});
+    let results=management_queries(None,Some(proxies.clone()),json!([query,query,query,query,
+        {"method":"host.proxies.get","params":{"unexpected":true},"body":"{\"proxy_id\":\"proxy_independent\"}"},
+        {"method":"host.proxies.get","params":{},"body":"not JSON"},
+        {"method":"host.proxies.get","query":{}},
+    ])).await;
+    assert_eq!(
+        results[0],
+        json!({"proxy_id":"proxy_independent","revision":5,"proxy_url":"http://user:first@proxy.example:8080/"})
+    );
+    assert_eq!(
+        results[1],
+        json!({"proxy_id":"proxy_independent","revision":6,"proxy_url":"socks5://user:second@proxy.example:1080"})
+    );
+    assert_eq!(results[2]["error"], "rejected");
+    for index in [3, 4, 5, 6] {
+        assert_eq!(results[index]["error"], "invalid_input");
+    }
+    assert!(proxies.values.lock().unwrap().is_empty());
 }

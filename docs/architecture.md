@@ -21,7 +21,7 @@ Codex Proxy RS 是单进程、单副本运行的多 Provider AI 网关，同时�
 - 面向客户端的 Responses、Chat Completions、Anthropic Messages、Images、standalone Search 和模型目录协议
 - 面向管理员的 `/api/admin/*` 控制面和 Vue 管理端
 - 面向 Key 持有者的 `/api/key-usage/*` 用量与客户端配置接口、独立 `/key-usage` 页面，以及复用数据面认证的 `/v1/usage` 额度查询
-- 固定的 OpenAI 与 xAI 两个编译期 Provider，以及插件提供的认证、中间件和管理扩展
+- 固定的 OpenAI、xAI 与 BPS 三个编译期 Provider，以及插件提供的认证、中间件和管理扩展
 - PostgreSQL 持久化、Redis 协调状态以及 S3/R2 数据库备份
 
 Responses、Chat Completions 和 Messages 共用生成执行链，API Key 账号可选择 Responses 或 Messages 上游协议，
@@ -83,6 +83,7 @@ flowchart TB
 | `gateway-plugin/sdk`（包名 `gateway-plugin-sdk`） | 公开插件清单与线协议，独立于网关领域；异步收发通过可选 `io` feature 提供 |
 | `gateway-plugin/runtime`（包名 `gateway-plugin-runtime`） | 插件包校验、能力适配、双向 RPC 与发布集合；通过 Host 管理子进程和受管 HTTP |
 | `providers/openai` | OpenAI OAuth、API Key 凭据、账号选择、目录、额度和 Responses/Messages/Images/Search transport |
+| `providers/bps` | ChatGPT Excel OAuth、账号目录、套餐额度、原生图片附件及 Responses 工具中继与传输 |
 | `providers/xai` | xAI OAuth session、账号选择、目录、额度和 Grok/Responses 转换 |
 | `frontend` | Vue 管理端与 Key 用量页，仅通过各自身份允许的控制面 API 访问状态 |
 | 独立仓库 `codex-proxy-ui` | 管理端与插件页面共用的 Vue 基础组件、纯主题算法和样式，不依赖宿主业务状态、路由或 API |
@@ -556,6 +557,9 @@ API Key 默认使用 Responses 协议和 HTTP/SSE，Responses 可选 WS 优先�
 协议和传输资格在选号阶段验证，WS pool 与 continuation 按凭据版本隔离。
 Responses API Key 与 OAuth 共用原生请求与响应链路；Messages API Key 使用独立 HTTP transport，
 在同一 Provider 的账号租约内执行生成和输入计数，不进入 Images、Search、Live 或 Responses 原生续接路径。
+BPS 套餐来自同一 Excel OAuth 身份的 Token 声明，额度通过 ChatGPT WHAM 主动查询与 BPS 响应头被动观测补全。
+Provider 负责解析和完整度合并，套餐、额度原文与访问事实通过现有账号端口按凭据版本写入；管理端只消费通用套餐与额度窗口投影，查询授权失败不推断生成凭据失效。
+BPS 图片附件仅上传到固定服务端点，HTTPS 图片引用由上游解析；图片及历史兼容策略由 Provider 启动配置持有，纯协议层按显式策略变换正文，不持有账号或下载资源。
 OpenAI 模型目录用于发现与原生 Responses 账号资格筛选。
 目录与账号白名单的优先级见[路由与账号范围](#6-路由账号范围与-continuation)
 

@@ -12,6 +12,7 @@ members = [
     "crates/gateway-store",
     "crates/providers/openai",
     "crates/providers/xai",
+    "crates/providers/bps",
 ]
 resolver = "3"
 

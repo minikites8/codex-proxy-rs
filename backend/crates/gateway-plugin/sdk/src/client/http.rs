@@ -29,6 +29,17 @@ pub struct HostHttpBody {
 }
 
 impl HostClient {
+    /// 读取当前启用代理的完整连接地址，结果可能包含认证信息，不应写入日志或管理页面
+    ///
+    /// # Errors
+    /// 代理不存在、禁用、宿主读取失败或响应无效时返回错误
+    pub async fn get_proxy(
+        &self,
+        request: wire::ProxyGetRequest,
+    ) -> Result<wire::ProxyGetResult, PluginFault> {
+        super::payload_call(self, wire::PROXIES_GET, request).await
+    }
+
     /// 分页查询代理摘要，不读取连接地址或凭据
     ///
     /// # Errors

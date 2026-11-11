@@ -61,6 +61,7 @@ impl Environment {
 pub(super) struct Providers {
     pub(super) openai: provider_openai::ProviderBundle,
     pub(super) xai: provider_xai::ProviderBundle,
+    pub(super) bps: provider_bps::ProviderBundle,
     pub(super) core: ProviderRegistry,
     pub(super) admin: ProviderAdminRegistry,
     pub(super) peer: gateway_admin::PeerUpstreamBundle,
@@ -69,6 +70,7 @@ pub(super) struct Providers {
 impl Providers {
     pub(super) async fn initialize(
         config: provider_openai::OpenAiConfig,
+        bps_config: provider_bps::BpsConfig,
         environment: &Environment,
     ) -> Result<Self, BootstrapError> {
         let ports = environment.store.provider_ports();
@@ -80,11 +82,21 @@ impl Providers {
         )
         .await?;
         environment.host.report_startup_ready("OpenAI Provider");
-        let xai = provider_xai::initialize(ports).await?;
+        let xai = provider_xai::initialize(ports.clone()).await?;
         environment.host.report_startup_ready("xAI Provider");
-        let core = ProviderRegistry::new([openai.core_provider(), xai.core_provider()])?;
-        let admin = ProviderAdminRegistry::new([openai.admin_provider(), xai.admin_provider()])
-            .map_err(|_| gateway_admin::model::AdminError::invalid("Provider 管理身份冲突"))?;
+        let bps = provider_bps::initialize(bps_config, ports)?;
+        environment.host.report_startup_ready("BPS Provider");
+        let core = ProviderRegistry::new([
+            openai.core_provider(),
+            xai.core_provider(),
+            bps.core_provider(),
+        ])?;
+        let admin = ProviderAdminRegistry::new([
+            openai.admin_provider(),
+            xai.admin_provider(),
+            bps.admin_provider(),
+        ])
+        .map_err(|_| gateway_admin::model::AdminError::invalid("Provider 管理身份冲突"))?;
         let peer = gateway_admin::initialize_peer_upstream(
             environment.store.provider_ports().accounts(),
             &admin,
@@ -100,6 +112,7 @@ impl Providers {
             peer,
             openai,
             xai,
+            bps,
             core,
             admin,
         })

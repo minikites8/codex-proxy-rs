@@ -757,6 +757,41 @@ xAI 的 `reasoning.effort` 接受 `none / minimal / low / medium / high / xhigh 
 `allowed_domains` 与 `excluded_domains`，两者不能同时为非空；客户端函数与托管搜索工具
 同名时使用内部别名，并在返回工具调用时还原客户端名称。搜索工具顶层的 `allowed_domains` 不受支持，返回请求错误
 
+#### BPS 适配
+
+BPS 使用独立 Excel OAuth 账号，以 HTTP SSE 请求 Basispoints；Responses、Chat Completions 和
+Messages 入口复用生成链。模型目录来自各账号的实际访问权限，目录读取失败不视为模型撤回
+
+客户端 function、custom 和 namespace 工具通过 `run_officejs` 信封中继，代理不执行 Office 代码
+整批工具仅在成功终态通过目录、参数 Schema 和调用标识校验后交付，失败仍保留上游错误及实际用量
+工具回放按账号、Client Key 和会话隔离；缓存失效时需要提供完整调用与结果历史
+
+当前适配支持文本、推理、客户端工具和图片输入，不提供独立图片生成 API、托管工具执行、结构化输出或 `previous_response_id` 续接
+`tool_choice` 支持 `auto`、`none`，`service_tier` 支持 `auto`、`default`
+请求按 BPS 白名单构造，不透传 `max_output_tokens`、`temperature`、`top_p`；Messages 的 `max_tokens`
+仅保留入口兼容，BPS 不保证该输出上限。默认将加密推理历史原样交给上游判断，不保证跨账号或客户端有效
+
+图片输入默认开启。消息中的 inline data 图片上传到固定 BPS 附件端点后以 `file_id` 提交；工具结果中的 inline data 保持内联
+已有附件 ID 与 HTTPS 图片引用交给上游解析，网关不下载任意外部图片 URL
+内联图片接受 PNG、JPEG、WebP、GIF，每张最多 20 MiB，合计最多 32 MiB，每次最多 16 张，每张最多 6400 万像素
+这些字节与像素限制用于网关可验证的内联图片；外部 HTTPS 引用与已有附件内容由上游验证
+
+兼容策略均默认关闭，通过 [BPS 连接配置](../deploy/README.md#bps-连接) 对全部 BPS 账号生效：
+
+- `omit_unsupported_hosted_tools`：自动工具选择时省略不支持的托管工具声明，并提示模型能力限制；强制工具选择仍拒绝
+- `omit_images_when_disabled`：仅当图片输入关闭时，把图片替换为明确占位，保留文字及工具结果配对；未开启时拒绝图片
+- `ignore_encrypted_history`：以明确占位替换加密历史，保留可读取的明文上下文
+
+占位不会执行被省略的能力，也不恢复被省略的内容
+
+生成请求明确返回 401 时将对应凭据版本标为过期，需要手工刷新或重新授权；429 写入账号冷却，不把工具转换失败记为账号失败
+Refresh Token 交换结果不明确时停止自动复用该 Token，需要重新授权
+BPS 不套用同名 Codex 模型单价，只有显式配置单价且计量完整时计算费用，否则保持未知
+
+套餐从 Access Token 的 `https://api.openai.com/auth` 对象中提取 `chatgpt_plan_type`；缺失时读取同一账号、用户的 ID Token 声明
+额度刷新查询 ChatGPT WHAM，生成响应中的额度头可补充已有快照；查询返回 401 或 403 不等同于 BPS 凭据失效
+管理端沿用通用额度窗口展示官方已用比例与重置时间；上游缺少比例、重置时间或点数余额时保留未知，不从本地 Token 用量推算剩余额度
+
 #### 容量拒绝与重试
 
 OpenAI HTTP 明确未发送的瞬时建连失败（含 TLS 握手 EOF）在单请求内共享最多 4 次 opening、30 秒预算。
@@ -1220,7 +1255,7 @@ config 返回 `{ name, plaintextKey }`，仅读取服务端会话绑定的当前
 
 账号列表支持以下稳定值：
 
-- `provider`: `openai` 或 `xai`，省略或空值表示不过滤
+- `provider`: `openai`、`xai` 或 `bps`，省略或空值表示不过滤
 - `groupId`: 分组 ID、`ungrouped`，或省略以不过滤
 - `status`: `normal`、`quota_paused`、`quota_exhausted`、`rate_limited`、`disabled`、`error`
 - `sortBy`: `email`、`status`、`planType`、`usage`、`lastUsedAt`、`expiresAt`
@@ -1578,6 +1613,9 @@ OAuth 等待回调期间不持有保护；提交仍拒绝已删除或连接配�
 - xAI 从单账号 object 或 `accounts` 数组中提取 OAuth token；并发、优先级等字段不参与认证
 - xAI 批量导入逐条独立校验：失败条目跳过并记录日志，不中断其余条目，仅当没有任何条目成功时整个导入才报错
 - xAI API Key 不是受支持的账号 credential
+- BPS 使用 `provider: "bps"`，接受有效的完整 Excel OAuth 会话 JSON 或 `accounts` 数组，字段可放在 `tokens`、`credentials` 或 `session_info` 内；Access Token 过期时需要重新授权，导入不会隐式兑换 Refresh Token
+- BPS 凭据保留同次授权的 `access_token`、`refresh_token`、`id_token`、`chatgpt_account_id` 和 `client_id`，不能通过修改 Codex 凭据的客户端标识转换授权
+- BPS OAuth 使用 Excel 官方 HTTPS 回调，完成授权时提交完整回调 URL，服务端校验本次 state 和 PKCE
 - OAuth 导入由目标 Provider 完成必要的 token exchange 或身份投影。API Key 导入校验凭据格式与地址，不调用 OAuth 或 ChatGPT 身份接口；可用性由模型目录和连接测试验证
 
 API Key 账号使用以下独立凭据形态：

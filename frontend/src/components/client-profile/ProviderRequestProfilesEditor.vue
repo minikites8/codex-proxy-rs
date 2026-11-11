@@ -4,7 +4,7 @@ import type { ClientProfileSelection, ProviderRequestProfile, ProviderRequestPro
 import { ZSegmented } from '@codex-proxy/ui'
 import { computed, shallowRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { formatProviderLabel, PROVIDER_IDS, providerIcon } from '@/utils/providers'
+import { formatProviderLabel, providerIcon } from '@/utils/providers'
 import ClientProfileEditor from './ClientProfileEditor.vue'
 import XaiClientProfileEditor from './XaiClientProfileEditor.vue'
 
@@ -21,8 +21,10 @@ withDefaults(defineProps<{
 const { t } = useI18n({ useScope: 'global' })
 
 const model = defineModel<ProviderRequestProfiles>({ required: true })
-const provider = shallowRef<(typeof PROVIDER_IDS)[number]>('openai')
-const providerOptions = PROVIDER_IDS.map(value => ({
+// 这里只展示管理 API 支持的可选画像；BPS 使用固定的 Excel 请求身份
+const profileProviderIds = ['openai', 'xai'] as const
+const provider = shallowRef<(typeof profileProviderIds)[number]>('openai')
+const providerOptions = profileProviderIds.map(value => ({
   value,
   label: formatProviderLabel(value),
   icon: providerIcon(value),

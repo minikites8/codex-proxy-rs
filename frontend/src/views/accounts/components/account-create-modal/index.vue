@@ -4,7 +4,6 @@ import type { AccountAuthorizationView } from '../../composables/useAccountAutho
 import type { AccountCreateForm, AccountImportMode } from '../../utils/accountCreate'
 import type { Account, AccountGroupRef } from '@/api'
 
-import { Openai, Xai } from '@boxicons/vue'
 import { ZButton, ZDialog, ZForm, ZIconButton, ZSegmented } from '@codex-proxy/ui'
 import { Copy, LayoutGrid, Settings2 } from '@lucide/vue'
 import { computed, useTemplateRef, watch } from 'vue'
@@ -12,6 +11,7 @@ import { useI18n } from 'vue-i18n'
 import AccountPlanBadge from '@/components/account/AccountPlanBadge.vue'
 import ProviderIconGroup from '@/components/ProviderIconGroup.vue'
 import { useCopyText } from '@/composables/useCopyText'
+import { providerIcon } from '@/utils/providers'
 import { useAccountApiKeyFormRules } from '../../composables/useAccountApiKeyFormRules'
 import { useAccountSettingsFormRules } from '../../composables/useAccountSettingsFormRules'
 import { accountCreateProvider } from '../../utils/accountCreate'
@@ -121,8 +121,7 @@ async function requestCreate() {
     <template #icon>
       <Settings2 v-if="view.configuring" class="text-z-text" :size="20" aria-hidden="true" />
       <LayoutGrid v-else-if="view.isBatch" class="text-z-text" :size="20" aria-hidden="true" />
-      <Xai v-else-if="view.provider === 'xai'" class="text-z-text" :width="20" :height="20" aria-hidden="true" />
-      <Openai v-else-if="view.provider === 'openai'" class="text-z-text" :width="20" :height="20" aria-hidden="true" />
+      <component :is="providerIcon(view.provider)" v-else-if="view.provider" class="size-5 text-z-text" aria-hidden="true" />
     </template>
 
     <div class="grid gap-4">

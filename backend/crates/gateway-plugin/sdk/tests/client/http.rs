@@ -17,6 +17,21 @@ struct NetworkHandler;
 impl PluginHandler for NetworkHandler {
     fn call(&self, call: PluginCall) -> CallFuture<'_> {
         Box::pin(async move {
+            if call.method == "proxy_get" {
+                let proxy = call
+                    .host
+                    .get_proxy(gateway_plugin_sdk::call::host::ProxyGetRequest {
+                        proxy_id: "proxy_one".into(),
+                    })
+                    .await?;
+                assert_eq!(proxy.proxy_id, "proxy_one");
+                assert_eq!(proxy.revision, 19);
+                assert_eq!(
+                    proxy.proxy_url,
+                    "socks5://test-user:test-secret@127.0.0.1:1080"
+                );
+                return Ok(CallReply::unary(json!({}), vec![]));
+            }
             if call.method == "proxies" {
                 let page = call
                     .host
@@ -495,6 +510,35 @@ async fn websocket_close_does_not_wait_for_a_pending_reader() {
     assert!(matches!(
         receive(&mut host).await.message,
         Message::Result { id: 1, .. }
+    ));
+    shutdown(&mut host, task).await;
+}
+
+#[tokio::test]
+async fn proxy_get_keeps_authenticated_url_in_binary_json_with_empty_control_fields() {
+    let (mut host, task) = start_session(NetworkHandler).await;
+    send_call(&mut host, 1, "proxy_get", json!({}), vec![]).await;
+    let frame=reply_callback(&mut host,"host.proxies.get",json!({}),serde_json::to_vec(&json!({"proxy_id":"proxy_one","revision":19,"proxy_url":"socks5://test-user:test-secret@127.0.0.1:1080"})).unwrap()).await;
+    assert!(matches!(frame.message,Message::Callback{params,..} if params==json!({})));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&frame.payload).unwrap(),
+        json!({"proxy_id":"proxy_one"})
+    );
+    assert!(matches!(
+        receive(&mut host).await.message,
+        Message::Result { id: 1, .. }
+    ));
+    shutdown(&mut host, task).await;
+}
+
+#[tokio::test]
+async fn proxy_get_rejects_nonempty_control_result() {
+    let (mut host, task) = start_session(NetworkHandler).await;
+    send_call(&mut host, 1, "proxy_get", json!({}), vec![]).await;
+    reply_callback(&mut host,"host.proxies.get",json!({"proxy_url":"forbidden-control-field"}),serde_json::to_vec(&json!({"proxy_id":"proxy_one","revision":19,"proxy_url":"socks5://test-user:test-secret@127.0.0.1:1080"})).unwrap()).await;
+    assert!(matches!(
+        receive(&mut host).await.message,
+        Message::Error { id: 1, .. }
     ));
     shutdown(&mut host, task).await;
 }

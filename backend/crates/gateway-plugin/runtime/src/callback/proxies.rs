@@ -43,6 +43,28 @@ impl PluginProxyPortSlot {
         self.access()?.resolve(id).await.map_err(map_admin_error)
     }
 
+    pub(super) async fn get(
+        &self,
+        params: serde_json::Value,
+        payload: &[u8],
+    ) -> Result<RpcReply, PluginFault> {
+        if params != serde_json::json!({}) {
+            return Err(invalid());
+        }
+        let request: wire::ProxyGetRequest =
+            serde_json::from_slice(payload).map_err(|_| invalid())?;
+        let proxy = self
+            .access()?
+            .get(&request.proxy_id)
+            .await
+            .map_err(map_admin_error)?;
+        encode(&wire::ProxyGetResult {
+            proxy_id: proxy.id,
+            revision: proxy.revision.get(),
+            proxy_url: proxy.proxy.expose_url().to_owned(),
+        })
+    }
+
     pub(super) async fn list(
         &self,
         params: serde_json::Value,

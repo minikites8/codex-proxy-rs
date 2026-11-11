@@ -89,6 +89,26 @@ pub struct HttpRequest {
 pub const ACCOUNT_HTTP: &str = "host.http.account";
 pub const PROXY_HTTP: &str = "host.http.proxy";
 pub const PROXIES_LIST: &str = "host.proxies.list";
+pub const PROXIES_GET: &str = "host.proxies.get";
+
+/// 查询当前启用代理；控制参数为空，输入通过二进制 JSON 传输
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProxyGetRequest {
+    pub proxy_id: String,
+}
+
+/// 完整代理连接地址可能含认证材料，不提供内容型 Debug
+///
+/// ```compile_fail
+/// use gateway_plugin_sdk::call::host::ProxyGetResult;
+/// fn log_proxy(proxy: ProxyGetResult) { println!("{proxy:?}"); }
+/// ```
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProxyGetResult {
+    pub proxy_id: String,
+    pub revision: u64,
+    pub proxy_url: String,
+}
 
 /// 按当前代理配置发送请求，不依赖账号或注入账号认证
 #[derive(Clone, Serialize, Deserialize)]

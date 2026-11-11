@@ -13,3 +13,6 @@ pub mod request;
 
 /// CPR 互联只读观测协议
 pub mod peer;
+
+/// Basispoints 请求与客户端工具的双向协议转换
+pub mod bps;

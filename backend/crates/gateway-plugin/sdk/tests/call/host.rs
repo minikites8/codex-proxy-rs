@@ -239,3 +239,25 @@ fn execution_facts_preserve_both_binary_sources_and_do_not_become_output_authori
     wrong_version[3] = b'1';
     assert!(ExecutionEvent::decode(&wrong_version).is_err());
 }
+
+#[test]
+fn proxy_get_binary_contract_preserves_exact_fields_and_full_revision() {
+    use gateway_plugin_sdk::call::host::{PROXIES_GET, ProxyGetRequest, ProxyGetResult};
+    assert_eq!(PROXIES_GET, "host.proxies.get");
+    let request = ProxyGetRequest {
+        proxy_id: "proxy_one".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(request).unwrap(),
+        json!({"proxy_id":"proxy_one"})
+    );
+    let wire = json!({"proxy_id":"proxy_one","revision":u64::MAX,"proxy_url":"http://test-user:test-secret@proxy.example:8080"});
+    let result: ProxyGetResult = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(serde_json::to_value(result).unwrap(), wire);
+    assert!(
+        serde_json::from_value::<ProxyGetResult>(
+            json!({"proxy_id":"proxy_one","revision":-1,"proxy_url":"http://example:8080"})
+        )
+        .is_err()
+    );
+}

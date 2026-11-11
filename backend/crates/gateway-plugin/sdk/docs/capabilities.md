@@ -293,6 +293,12 @@ HTTP 和 request 中间件中的模型回调沿用有效请求设置；attempt�
 返回 `{ items: [{ id, name, enabled }], total, page, page_size }`，包含禁用代理，不返回连接地址、凭据或账号信息。
 查询和结果使用二进制 JSON 载荷，控制参数及结果均为 `{}`；目录展示不代替发送时的状态校验
 
+`HostClient::get_proxy(ProxyGetRequest { proxy_id })` 经 `host.proxies.get` 读取当前启用代理。
+请求二进制 JSON 为 `{ proxy_id }`，响应为 `{ proxy_id, revision, proxy_url }`，`revision` 为 `u64`；
+控制参数及结果均为 `{}`。`proxy_url` 是完整连接 URL，包含配置中的认证信息；结果类型不提供 `Debug`，
+不得写入日志或普通管理页面。此回调不依赖账号，也不要求额外权限声明；代理不存在或禁用时拒绝。
+返回值是读取时的快照，代理配置可能随后变化；插件自行决定是否重新读取，不锁定后续业务流程
+
 请求和响应 `headers` 使用 `(String, Vec<u8>)`，保留重复头与非 UTF-8 值；响应另有 `http_version`。
 读取至 EOF 后通过 `body.trailers()` 取得完整尾部头，读取中只包含已收到的部分。
 `collect` 只返回正文，需要尾部头时使用 `read`；底层非流式回复携带 `trailers`，流式回复在 `stream_read` 中交付尾部头

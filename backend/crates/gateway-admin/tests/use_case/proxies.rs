@@ -16,6 +16,7 @@ pub(super) struct TestProxies {
     pub accounts: Option<Vec<ProxyAccountRef>>,
     pub record: Option<ProxyRecord>,
     pub records: Vec<ProxyRecord>,
+    pub current_revision: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
 }
 
 struct ImportGuard(super::accounts::EventLog);
@@ -80,11 +81,17 @@ impl ProxyStore for TestProxies {
         })
     }
     async fn get(&self, id: &str) -> AdminStoreResult<ProxyRecord> {
-        self.record
+        let mut record = self
+            .record
             .clone()
             .filter(|record| record.id == id)
             .or_else(|| self.records.iter().find(|record| record.id == id).cloned())
-            .ok_or_else(|| super::unavailable("proxy"))
+            .ok_or_else(|| super::unavailable("proxy"))?;
+        if let Some(revision) = &self.current_revision {
+            record.revision =
+                Revision::new(revision.load(std::sync::atomic::Ordering::SeqCst)).unwrap();
+        }
+        Ok(record)
     }
     async fn create(&self, _: NewProxy, _: &MutationContext) -> AdminStoreResult<ProxyMutation> {
         if let Some(events) = &self.events {
@@ -120,7 +127,7 @@ impl ProxyStore for TestProxies {
 }
 
 #[tokio::test]
-async fn plugin_proxy_resolution_requires_enabled_configuration_without_account_or_probe() {
+async fn plugin_proxy_connection_requires_enabled_configuration_without_account_or_probe() {
     use gateway_admin::model::{AdminErrorKind, PageSize};
     use std::sync::Arc;
 
@@ -131,7 +138,7 @@ async fn plugin_proxy_resolution_requires_enabled_configuration_without_account_
             id: format!("proxy_{enabled}"),
             name: "Login".into(),
             proxy: OutboundProxy::parse("http://user:secret@127.0.0.1:8080").unwrap(),
-            revision: Revision::new(1).unwrap(),
+            revision: Revision::new(7).unwrap(),
             enabled,
             auto_location: false,
             location: None,
@@ -151,22 +158,47 @@ async fn plugin_proxy_resolution_requires_enabled_configuration_without_account_
             updated_at: now,
         })
         .collect();
+    let revision = Arc::new(std::sync::atomic::AtomicU64::new(7));
     let access = gateway_admin::initialize_plugin_proxies(Arc::new(TestProxies {
+        current_revision: Some(revision.clone()),
         records: records.clone(),
         ..Default::default()
     }));
+    let connection = access.get("proxy_true").await.unwrap();
+    assert_eq!(connection.id, "proxy_true");
+    assert_eq!(connection.revision, records[0].revision);
+    assert_eq!(connection.proxy, records[0].proxy);
+    assert_eq!(
+        connection.proxy.expose_url(),
+        "http://user:secret@127.0.0.1:8080/"
+    );
+    let diagnostic = format!("{connection:?}");
+    assert!(!diagnostic.contains("secret"));
+    assert!(!diagnostic.contains("user"));
+    assert!(!diagnostic.contains("127.0.0.1"));
     assert_eq!(
         access.resolve("proxy_true").await.unwrap(),
-        records[0].proxy
+        connection.proxy
     );
+    revision.store(8, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(access.get("proxy_true").await.unwrap().revision.get(), 8);
     assert_eq!(
         access.resolve("proxy_false").await.unwrap_err().kind(),
         AdminErrorKind::Invalid
     );
+    assert_eq!(
+        access.get("proxy_false").await.unwrap_err().kind(),
+        AdminErrorKind::Invalid
+    );
+    assert!(access.get("missing").await.is_err());
     assert!(access.resolve("missing").await.is_err());
     for id in ["", "bad\n", &"x".repeat(129)] {
         assert_eq!(
             access.resolve(id).await.unwrap_err().kind(),
+            AdminErrorKind::Invalid
+        );
+        assert_eq!(
+            access.get(id).await.unwrap_err().kind(),
             AdminErrorKind::Invalid
         );
     }

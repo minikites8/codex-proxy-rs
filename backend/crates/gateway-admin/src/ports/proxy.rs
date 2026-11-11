@@ -7,16 +7,20 @@ use super::store::AdminStoreResult;
 use crate::model::{
     AdminError, MutationContext, Revision,
     proxies::{
-        ImportProxyBinding, NewProxy, ProxyAccountListQuery, ProxyAccountPage, ProxyListQuery,
-        ProxyMutation, ProxyPage, ProxyRecord, ProxyTestResult, UpdateProxy,
+        ImportProxyBinding, NewProxy, PluginProxyConnection, ProxyAccountListQuery,
+        ProxyAccountPage, ProxyListQuery, ProxyMutation, ProxyPage, ProxyRecord, ProxyTestResult,
+        UpdateProxy,
     },
 };
 
-/// 插件受管网络读取代理的窄端口，连接配置仅供宿主发送请求
+/// 插件代理读取窄端口，认证信息仅交给已授权的受信插件或宿主发送路径
 #[async_trait]
 pub trait PluginProxyAccess: Send + Sync {
     async fn list(&self, query: ProxyListQuery) -> Result<ProxyPage, AdminError>;
-    async fn resolve(&self, id: &str) -> Result<OutboundProxy, AdminError>;
+    async fn get(&self, id: &str) -> Result<PluginProxyConnection, AdminError>;
+    async fn resolve(&self, id: &str) -> Result<OutboundProxy, AdminError> {
+        self.get(id).await.map(|connection| connection.proxy)
+    }
 }
 
 #[async_trait]

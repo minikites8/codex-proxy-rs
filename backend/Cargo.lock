@@ -920,6 +920,7 @@ dependencies = [
  "gateway-host",
  "gateway-plugin-runtime",
  "gateway-store",
+ "provider-bps",
  "provider-openai",
  "provider-xai",
  "serde",
@@ -1914,6 +1915,7 @@ version = "0.0.0"
 dependencies = [
  "http",
  "httpdate",
+ "jsonschema",
  "memchr",
  "serde",
  "serde_json",
@@ -3333,6 +3335,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "provider-bps"
+version = "0.0.0"
+dependencies = [
+ "async-stream",
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "chrono",
+ "futures",
+ "gateway-admin",
+ "gateway-core",
+ "gateway-protocol",
+ "getrandom 0.4.3",
+ "image",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+ "wiremock",
 ]
 
 [[package]]

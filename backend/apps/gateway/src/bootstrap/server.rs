@@ -12,7 +12,7 @@ use super::{
 pub async fn run() -> Result<(), BootstrapError> {
     let config = gateway_host::load_config::<GatewayConfig>()?;
     let environment = Environment::initialize(config.host, config.store, Mode::Server).await?;
-    let mut providers = Providers::initialize(config.openai, &environment).await?;
+    let mut providers = Providers::initialize(config.openai, config.bps, &environment).await?;
     let Environment {
         host,
         mut store,
@@ -176,6 +176,7 @@ pub async fn run() -> Result<(), BootstrapError> {
     plan.extend(core.take_worker_contributions());
     plan.extend(providers.openai.take_worker_contributions());
     plan.extend(providers.xai.take_worker_contributions());
+    plan.extend(providers.bps.take_worker_contributions());
     plan.extend(admin.take_worker_contributions());
     plan.extend(providers.peer.take_worker_contributions());
     plan.push(or_shutdown!(

@@ -13,6 +13,14 @@ pub enum AccountProxySelection {
     Saved(String),
 }
 
+/// 插件显式读取的当前可用连接，认证信息只交给受信宿主调用
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginProxyConnection {
+    pub id: String,
+    pub revision: Revision,
+    pub proxy: OutboundProxy,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportProxyBinding {
     pub id: String,

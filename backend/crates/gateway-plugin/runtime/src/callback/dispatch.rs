@@ -236,6 +236,9 @@ impl CallbackHandler for PluginCallbacks {
                 maximum_payload,
                 request_limits: &request_limits,
             };
+            if method == host::PROXIES_GET {
+                return proxies.get(params, &payload).await;
+            }
             if method == host::PROXIES_LIST {
                 return proxies.list(params, &payload).await;
             }
