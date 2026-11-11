@@ -865,6 +865,17 @@ docker compose -f deploy/compose.yaml up -d --no-build --wait
 
 升级后通过管理端版本接口或容器 image digest 确认运行实例的版本和 revision
 
+主分支 CI 在质量检查与容器验证通过后，将 `linux/amd64` 镜像发布到当前仓库的
+`ghcr.io/<所有者>/<仓库>:main`，同时提供 `sha-<完整提交 SHA>` 标签以固定构建。
+`main` 随主分支更新，正式版本仍使用 Release 镜像；拉取前须确认该 GHCR 包可见或已登录
+
+使用当前仓库的主分支镜像时，在 Compose 命令前设置 `CPR_IMAGE`，例如：
+
+```bash
+CPR_IMAGE=ghcr.io/minikites8/codex-proxy-rs:main docker compose -f deploy/compose.yaml pull codex-proxy-rs
+CPR_IMAGE=ghcr.io/minikites8/codex-proxy-rs:main docker compose -f deploy/compose.yaml up -d --no-build --wait codex-proxy-rs
+```
+
 构建元数据通过一次性进程环境传入：
 
 ```bash

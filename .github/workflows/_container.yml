@@ -11,6 +11,10 @@ on:
         description: Validate the complete Docker source build
         type: boolean
         default: true
+      export_image:
+        description: Export the verified image for a later publishing job
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -122,6 +126,9 @@ jobs:
             CPR_GIT_SHA=${{ inputs.ref }}
           load: true
           tags: ${{ env.CPR_IMAGE }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ inputs.ref }}
           no-cache-filters: |
             runtime-base
             runtime
@@ -135,3 +142,17 @@ jobs:
           image: ${{ env.CPR_IMAGE }}
           platform: linux/amd64
           artifact-name: container-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}-amd64
+
+      - name: Export verified image
+        if: inputs.export_image
+        run: docker save --output "$RUNNER_TEMP/runtime-image.tar" "$CPR_IMAGE"
+
+      - name: Upload verified image
+        if: inputs.export_image
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-image-amd64
+          path: ${{ runner.temp }}/runtime-image.tar
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
