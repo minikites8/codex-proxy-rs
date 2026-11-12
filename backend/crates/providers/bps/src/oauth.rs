@@ -17,13 +17,14 @@ use gateway_admin::model::{
         AuthorizationCommitGuard, AuthorizationMutationTarget, AuthorizationReceiptKey,
         AuthorizationStarted, CompleteAuthorization, CredentialCommitGuard,
         PendingAuthorizationMutation, PreparedAuthorizationCommit, PreparedAuthorizationCredential,
-        PreparedCredentialRotation, PreparedCredentialRotationFacts,
+        PreparedCredentialRotation, PreparedCredentialRotationFacts, ProviderDocument,
     },
 };
 use gateway_core::{
     account::{
-        CredentialCasOutcome, CredentialCasUpdate, OpaqueProviderData, PlaintextCredential,
-        ProviderAccount, ProviderAccountId, ProviderAccountIdentity, ProviderAccountUpdate,
+        CredentialCasOutcome, CredentialCasUpdate, LoadedCredential, OpaqueProviderData,
+        PlaintextCredential, ProviderAccount, ProviderAccountId, ProviderAccountIdentity,
+        ProviderAccountUpdate,
     },
     provider_ports::{
         NewOAuthPendingFlow, OAuthPendingBinding, OAuthPendingClaimOutcome,
@@ -289,9 +290,7 @@ impl BpsProvider {
                     .load_current_credential(account_id)
                     .await
                     .map_err(|_| BpsError::Unavailable)?;
-                let (facts, guard) = self
-                    .replacement(&loaded.account, &credential, false)
-                    .await?;
+                let (facts, guard) = self.replacement(&loaded, &credential, false).await?;
                 PreparedAuthorizationCredential::Reauthorize(Box::new(
                     PreparedCredentialRotation::new(facts, guard),
                 ))
@@ -306,6 +305,14 @@ impl BpsProvider {
         credential: &Credential,
         preserve_profile: bool,
     ) -> Result<PreparedCredentialRotation, BpsError> {
+        let loaded = self.load_for_update(account).await?;
+        let (facts, guard) = self
+            .replacement(&loaded, credential, preserve_profile)
+            .await?;
+        Ok(PreparedCredentialRotation::new(facts, guard))
+    }
+
+    async fn load_for_update(&self, account: &AccountRecord) -> Result<LoadedCredential, BpsError> {
         let id = ProviderAccountId::new(account.id.clone()).map_err(|_| BpsError::Credential)?;
         let loaded = self
             .ports
@@ -313,15 +320,36 @@ impl BpsProvider {
             .load_current_credential(&id)
             .await
             .map_err(|_| BpsError::Unavailable)?;
-        let (facts, guard) = self
-            .replacement(&loaded.account, credential, preserve_profile)
-            .await?;
-        Ok(PreparedCredentialRotation::new(facts, guard))
+        if loaded.account.provider() != &self.kind
+            || loaded.account.authentication_kind() != "oauth"
+            || account.provider_kind != self.kind
+            || account.authentication_kind != "oauth"
+        {
+            return Err(BpsError::Credential);
+        }
+        if loaded.account.revision().get() != account.credential_revision.get() {
+            return Err(BpsError::Busy);
+        }
+        Ok(loaded)
+    }
+
+    pub(crate) async fn prepare_connection_update(
+        &self,
+        account: &AccountRecord,
+        connection: &serde_json::Map<String, Value>,
+    ) -> Result<PreparedCredentialRotation, BpsError> {
+        let loaded = self.load_for_update(account).await?;
+        let mut credential = Credential::parse(loaded.credential.expose_to_provider())?;
+        credential.update_connection(connection)?;
+        let (mut facts, guard) = self.replacement(&loaded, &credential, true).await?;
+        facts.replacement_identity = None;
+        facts.next_refresh_at = loaded.account.next_refresh_at().map(Into::into);
+        Ok(PreparedCredentialRotation::new(facts, guard).preserving_credential_state())
     }
 
     async fn replacement(
         &self,
-        account: &ProviderAccount,
+        loaded: &LoadedCredential,
         credential: &Credential,
         preserve_profile: bool,
     ) -> Result<
@@ -331,6 +359,7 @@ impl BpsProvider {
         ),
         BpsError,
     > {
+        let account = &loaded.account;
         if account.provider() != &self.kind
             || account.upstream_user_id() != Some(credential.user_id())
             || account.upstream_account_id() != Some(credential.account_id())
@@ -338,6 +367,12 @@ impl BpsProvider {
             return Err(BpsError::Credential);
         }
         let created = credential.prepare(account.name())?;
+        let mut material = credential.material().clone();
+        // 授权只替换上游身份材料，未显式携带连接配置时保留本地账号选择
+        crate::credential::inherit_connection(
+            &mut material,
+            loaded.credential.expose_to_provider(),
+        );
         let facts = PreparedCredentialRotationFacts {
             account_id: account.id().clone(),
             provider_kind: self.kind.clone(),
@@ -355,7 +390,7 @@ impl BpsProvider {
                 .map(str::to_owned),
             preserve_profile,
             preserve_credential_state: false,
-            provider_material: credential.document(),
+            provider_material: ProviderDocument::new(OpaqueProviderData::new(material)),
             has_refresh_token: credential.refresh_token().is_some(),
             access_token_expires_at: credential.expires_at(),
             next_refresh_at: None,
@@ -379,8 +414,8 @@ impl BpsProvider {
     }
 
     pub(crate) async fn refresh_background(&self, id: &ProviderAccountId) -> Result<(), BpsError> {
-        let (account, credential, guard) = self.refresh_tokens(id).await?;
-        let update = cas_update(&account, &credential, credential.material().clone())?;
+        let (current, credential, guard) = self.refresh_tokens(id).await?;
+        let update = cas_update(&current.account, &credential, credential.material().clone())?;
         match self
             .ports
             .accounts()
@@ -403,7 +438,7 @@ impl BpsProvider {
     async fn refresh_tokens(
         &self,
         id: &ProviderAccountId,
-    ) -> Result<(ProviderAccount, Credential, Box<dyn CredentialCommitGuard>), BpsError> {
+    ) -> Result<(LoadedCredential, Credential, Box<dyn CredentialCommitGuard>), BpsError> {
         let accounts = self.ports.accounts();
         let loaded = accounts
             .load_current_credential(id)
@@ -473,8 +508,7 @@ impl BpsProvider {
         let current = accounts
             .load_credential(id, revision)
             .await
-            .map_err(|_| BpsError::Busy)?
-            .account;
+            .map_err(|_| BpsError::Busy)?;
         Ok((
             current,
             refreshed,

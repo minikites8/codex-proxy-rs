@@ -759,7 +759,7 @@ xAI 的 `reasoning.effort` 接受 `none / minimal / low / medium / high / xhigh 
 
 #### BPS 适配
 
-BPS 使用独立 Excel OAuth 账号，默认通过 WebSocket 请求 Basispoints，也可配置 HTTP SSE；Responses、Chat Completions 和
+BPS 使用独立 Excel OAuth 账号，默认通过 WebSocket 请求 Basispoints，也可按账号选择 HTTP SSE；Responses、Chat Completions 和
 Messages 入口复用生成链。模型目录来自各账号的实际访问权限，目录读取失败不视为模型撤回
 
 两种上游传输共用图片附件、工具回放和响应转换；客户端可继续使用 HTTP JSON、SSE 或 Responses WebSocket
@@ -784,7 +784,7 @@ Responses Lite 的 `input[].additional_tools` 和 `input[].tool_search_output` �
 内联图片接受 PNG、JPEG、WebP、GIF，每张最多 20 MiB，合计最多 32 MiB，每次最多 16 张，每张最多 6400 万像素
 这些字节与像素限制用于网关可验证的内联图片；外部 HTTPS 引用与已有附件内容由上游验证
 
-兼容策略均默认关闭，通过 [BPS 连接配置](../deploy/README.md#bps-连接) 对全部 BPS 账号生效：
+兼容策略均默认关闭，可在 [BPS 连接配置](../deploy/README.md#bps-连接) 设置全局默认值，或通过账号连接设置逐项覆盖：
 
 - `omit_unsupported_hosted_tools`：自动工具选择时省略不支持的托管工具声明，并提示模型能力限制；强制工具选择仍拒绝
 - `omit_images_when_disabled`：仅当图片输入关闭时，把图片替换为明确占位，保留文字及工具结果配对；未开启时拒绝图片
@@ -1734,11 +1734,23 @@ sub2api 的 `credentials.model_mapping` 不转换为本项目的账号模型限�
 `connection.transport` 支持 `http`、`prefer_websocket`，Messages 只接受 `http`；切换协议时须同时提交合法的传输组合。
 省略 `connection` 时只更新账号设置；
 省略 `connection.apiKey` 保留当前密钥，空字符串无效。
-Codex OAuth 账号只接受 `connection: { transport }`，不接受 `protocol`、`baseUrl`、`apiKey` 或 OAuth token。
+Codex OAuth 账号只接受 `connection: { transport }`；BPS OAuth 账号还接受下列可选布尔字段，省略时保留该项已有选择，尚未单独设置的项目继承全局默认值：
+
+| BPS 连接字段 | 用途 |
+| --- | --- |
+| `imageInputEnabled` | 开启图片输入 |
+| `omitImagesWhenDisabled` | 图片输入关闭时以占位文字替换图片 |
+| `omitUnsupportedHostedTools` | 自动工具选择时省略不支持的托管工具 |
+| `ignoreEncryptedHistory` | 用占位文字替换加密历史 |
+
+OAuth 账号不接受 `protocol`、`baseUrl`、`apiKey` 或 OAuth token。
+BPS 的 `http` 固定使用 SSE，`prefer_websocket` 固定使用 WS，不自动回退；未单独设置时继承 `bps.upstream_transport`。
+BPS 连接设置随凭据导入导出，刷新和重新授权保留已有选择。
 连接设置不能修改账号 ID、Provider 或认证类型，也不接受通用凭据文档。
 凭据与设置在同一事务中保存，任一校验或持久化失败均不落库。
 `GET /api/admin/accounts/detail` 对 API Key 账号额外返回 `credentialConfiguration: { base_url, protocol, transport }`；
-OAuth 账号返回 `credentialConfiguration: { transport }`。响应不回显密钥或 token；不适用的账号省略该字段。
+Codex OAuth 账号返回 `credentialConfiguration: { transport }`；BPS 账号还返回实际生效的 `image_input_enabled`、`omit_images_when_disabled`、`omit_unsupported_hosted_tools` 和 `ignore_encrypted_history` 布尔值。
+响应不回显密钥或 token；不适用的账号省略该字段。
 更新会推进凭据 revision 并失效目录与连接；旧版本会话不可静默续接到新上游
 
 OAuth start 使用：

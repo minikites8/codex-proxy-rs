@@ -142,6 +142,16 @@ impl ProviderAdmin for BpsProvider {
         &self,
         command: PrepareCredentialRotation,
     ) -> Result<PreparedCredentialRotation, ProviderAdminError> {
+        let material = command
+            .provider_material
+            .expose_to_provider()
+            .expose_to_provider();
+        if material.contains_key("transport") {
+            return self
+                .prepare_connection_update(&command.account, material)
+                .await
+                .map_err(BpsError::admin);
+        }
         let credential = Credential::parse(
             command
                 .provider_material
@@ -163,6 +173,25 @@ impl ProviderAdmin for BpsProvider {
         self.refresh_for_admin(&command.account)
             .await
             .map_err(BpsError::admin)
+    }
+    async fn account_configuration(
+        &self,
+        account_id: &ProviderAccountId,
+    ) -> Result<Option<ProviderDocument>, ProviderAdminError> {
+        let loaded = self
+            .ports
+            .accounts()
+            .load_current_credential(account_id)
+            .await
+            .map_err(|_| BpsError::Unavailable.admin())?;
+        if loaded.account.provider() != &self.kind
+            || loaded.account.authentication_kind() != "oauth"
+        {
+            return Err(BpsError::Credential.admin());
+        }
+        let credential =
+            Credential::parse(loaded.credential.expose_to_provider()).map_err(BpsError::admin)?;
+        Ok(Some(credential.configuration(&self.config)))
     }
     async fn quota(
         &self,

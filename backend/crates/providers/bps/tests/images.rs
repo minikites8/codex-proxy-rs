@@ -37,6 +37,49 @@ async fn image_stream(
 
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==";
 
+#[tokio::test]
+async fn account_image_policy_rejects_or_replaces_images_without_uploading() {
+    for omit in [false, true] {
+        let (server, accounts, account) = setup().await;
+        let account = crate::support::set_connection_options(
+            &accounts,
+            &account,
+            json!({"image_input_enabled":false,"omit_images_when_disabled":omit}),
+        )
+        .await;
+        let result = image_stream(&server,"openai",crate::support::ports_with(accounts),account,
+            json!({"model":"model","input":[{"role":"user","content":[{"type":"input_text","text":"keep this text"},{"type":"input_image","image_url":format!("data:image/png;base64,{PNG}")}]}]})
+        ).await;
+        if omit {
+            let mut stream = result.unwrap();
+            while let Some(event) = stream.next().await {
+                event.unwrap();
+            }
+            let requests = server.received_requests().await.unwrap();
+            let request = requests
+                .iter()
+                .find(|request| request.url.path() == "/basispoints/api/responses")
+                .unwrap();
+            let body = String::from_utf8(request.body.clone()).unwrap();
+            assert!(body.contains("keep this text") && body.contains("Image omitted"));
+            assert!(!body.contains("data:image") && !body.contains("input_image"));
+        } else {
+            assert!(result.is_err());
+        }
+        assert!(
+            server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .all(
+                    |request| request.url.path() == "/basispoints/api/responses/access"
+                        || (omit && request.url.path() == "/basispoints/api/responses")
+                )
+        );
+    }
+}
+
 async fn setup() -> (
     MockServer,
     Arc<crate::support::MemoryProviderAccountStore>,

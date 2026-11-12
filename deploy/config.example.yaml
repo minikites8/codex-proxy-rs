@@ -79,7 +79,7 @@ api:
   request_id_header: 'x-request-id'
 
 bps:
-  # BPS 生成默认使用独立 WebSocket；可改为 sse 使用 HTTP 与 SSE。
+  # 未单独设置传输的 BPS 账号默认使用 WS，可改为 sse
   upstream_transport: ws
   image_input_enabled: true
   omit_images_when_disabled: false

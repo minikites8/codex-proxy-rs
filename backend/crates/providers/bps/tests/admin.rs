@@ -1,4 +1,4 @@
-//! BPS 手工刷新与持久版本栅栏
+//! BPS 账号连接配置、手工刷新与持久版本栅栏
 use gateway_admin::model::provider_credentials::{
     PrepareCredentialRefresh, PrepareCredentialRotation,
 };
@@ -35,7 +35,7 @@ async fn refresh_preserves_refresh_token_and_fences_prepared_commit() {
             account: account.clone(),
             model_access: None,
             credential: PlaintextCredential::new(
-                json!({"access_token":token,"refresh_token":"original-refresh","client_id":client})
+                json!({"access_token":token,"refresh_token":"original-refresh","client_id":client,"transport":"http","image_input_enabled":false,"omit_images_when_disabled":true,"omit_unsupported_hosted_tools":true,"ignore_encrypted_history":true})
                     .as_object()
                     .unwrap()
                     .clone(),
@@ -71,6 +71,23 @@ async fn refresh_preserves_refresh_token_and_fences_prepared_commit() {
         .await
         .unwrap();
     assert_eq!(prepared.facts().expected_credential_revision.get(), 2);
+    assert_eq!(
+        prepared
+            .facts()
+            .provider_material
+            .expose_to_provider()
+            .expose_to_provider()["transport"],
+        "http"
+    );
+    let options = prepared
+        .facts()
+        .provider_material
+        .expose_to_provider()
+        .expose_to_provider();
+    assert_eq!(options["image_input_enabled"], false);
+    assert_eq!(options["omit_images_when_disabled"], true);
+    assert_eq!(options["omit_unsupported_hosted_tools"], true);
+    assert_eq!(options["ignore_encrypted_history"], true);
     assert_eq!(
         prepared
             .facts()
@@ -201,8 +218,9 @@ async fn rotation_keeps_existing_plan_when_new_tokens_omit_plan_claim() {
         None,
     )
     .with_profile(None, Some("workspace-test".into()), Some("pro".into()));
-    let material =
-        crate::credential::document(json!({"access_token":crate::credential::token(client)}));
+    let material = crate::credential::document(
+        json!({"access_token":crate::credential::token(client),"transport":"http","image_input_enabled":false,"omit_images_when_disabled":true,"omit_unsupported_hosted_tools":true,"ignore_encrypted_history":true}),
+    );
     accounts
         .create_account(NewProviderAccount {
             account: account.clone(),
@@ -227,9 +245,137 @@ async fn rotation_keeps_existing_plan_when_new_tokens_omit_plan_claim() {
     let prepared = provider
         .prepare_rotation(PrepareCredentialRotation {
             account: crate::support::account_record(&account),
-            provider_material: material,
+            provider_material: crate::credential::document(
+                json!({"access_token":crate::credential::token(client)}),
+            ),
         })
         .await
         .unwrap();
     assert_eq!(prepared.facts().plan_type.as_deref(), Some("pro"));
+    assert_eq!(
+        prepared
+            .facts()
+            .provider_material
+            .expose_to_provider()
+            .expose_to_provider()["transport"],
+        "http"
+    );
+    let options = prepared
+        .facts()
+        .provider_material
+        .expose_to_provider()
+        .expose_to_provider();
+    assert_eq!(options["image_input_enabled"], false);
+    assert_eq!(options["omit_images_when_disabled"], true);
+    assert_eq!(options["omit_unsupported_hosted_tools"], true);
+    assert_eq!(options["ignore_encrypted_history"], true);
+}
+
+#[tokio::test]
+async fn account_transport_configuration_uses_default_and_prepares_isolated_updates() {
+    for (default, expected) in [
+        (provider_bps::BpsUpstreamTransport::Ws, "prefer_websocket"),
+        (provider_bps::BpsUpstreamTransport::Sse, "http"),
+    ] {
+        let accounts = Arc::new(crate::support::MemoryProviderAccountStore::default());
+        let account = ProviderAccount::new(
+            ProviderAccountId::new("acct_transport").unwrap(),
+            ProviderKind::new("bps").unwrap(),
+            "transport".into(),
+            Some("user-test".into()),
+            "oauth".into(),
+            CredentialRevision::new(1).unwrap(),
+            None,
+        )
+        .with_profile(None, Some("workspace-test".into()), Some("pro".into()));
+        let material = json!({"access_token":crate::credential::token("app_fnr0pYvVwwFDocDumLG3H2Bp"),"refresh_token":"unchanged-refresh","refresh_attempted":true,"client_id":"app_fnr0pYvVwwFDocDumLG3H2Bp","chatgpt_account_id":"workspace-test","schema_version":1});
+        accounts
+            .create_account(NewProviderAccount {
+                account: account.clone(),
+                model_access: None,
+                credential: PlaintextCredential::new(material.as_object().unwrap().clone()),
+            })
+            .await
+            .unwrap();
+        let provider = provider_bps::initialize(
+            provider_bps::BpsConfig {
+                upstream_transport: default,
+                ..Default::default()
+            },
+            crate::support::ports_with(accounts.clone()),
+        )
+        .unwrap()
+        .admin_provider();
+        let configuration = provider
+            .account_configuration(account.id())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            configuration.expose_to_provider().expose_to_provider(),
+            json!({"transport":expected,"image_input_enabled":true,"omit_images_when_disabled":false,"omit_unsupported_hosted_tools":false,"ignore_encrypted_history":false}).as_object().unwrap()
+        );
+        for transport in ["http", "prefer_websocket"] {
+            let prepared = provider
+                .prepare_rotation(PrepareCredentialRotation {
+                    account: crate::support::account_record(&account),
+                    provider_material: crate::credential::document(json!({"transport":transport,"image_input_enabled":false,"omit_images_when_disabled":true,"omit_unsupported_hosted_tools":true,"ignore_encrypted_history":true})),
+                })
+                .await
+                .unwrap();
+            let facts = prepared.facts();
+            assert!(facts.preserve_profile && facts.preserve_credential_state);
+            assert_eq!(facts.replacement_identity, None);
+            let mut expected_material = material.clone();
+            expected_material["transport"] = transport.into();
+            expected_material["image_input_enabled"] = false.into();
+            expected_material["omit_images_when_disabled"] = true.into();
+            expected_material["omit_unsupported_hosted_tools"] = true.into();
+            expected_material["ignore_encrypted_history"] = true.into();
+            assert_eq!(
+                facts
+                    .provider_material
+                    .expose_to_provider()
+                    .expose_to_provider(),
+                expected_material.as_object().unwrap()
+            );
+            assert_eq!(
+                accounts
+                    .load_current_credential(account.id())
+                    .await
+                    .unwrap()
+                    .credential
+                    .expose_to_provider(),
+                material.as_object().unwrap(),
+                "preparation must not persist before the account transaction"
+            );
+        }
+        for invalid in [
+            json!({"transport":"invalid"}),
+            json!({"transport":"http","image_input_enabled":"invalid"}),
+            json!({"transport":"http","api_key":"unexpected"}),
+            json!({"transport":"http","access_token":"unexpected"}),
+        ] {
+            assert!(
+                provider
+                    .prepare_rotation(PrepareCredentialRotation {
+                        account: crate::support::account_record(&account),
+                        provider_material: crate::credential::document(invalid),
+                    })
+                    .await
+                    .is_err()
+            );
+        }
+        let mut stale = crate::support::account_record(&account);
+        stale.credential_revision = gateway_admin::model::Revision::new(2).unwrap();
+        assert!(
+            provider
+                .prepare_rotation(PrepareCredentialRotation {
+                    account: stale,
+                    provider_material: crate::credential::document(json!({"transport":"http"})),
+                })
+                .await
+                .is_err()
+        );
+    }
 }

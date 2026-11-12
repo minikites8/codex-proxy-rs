@@ -1,4 +1,4 @@
-import type { Account, AccountModelAccess, ApiKeyConfiguration } from '@/api'
+import type { Account, AccountModelAccess, ApiKeyConfiguration, BpsAccountOptions } from '@/api'
 import { computed, ref, shallowRef, watch } from 'vue'
 
 import { getAccountDetail, updateAccount } from '@/api'
@@ -7,8 +7,9 @@ import { useRequestState } from '@/composables/useRequestState'
 import { t } from '@/i18n'
 import { notification as ZNotification } from '@/utils/notification'
 import { accountNameUpdate } from '../utils/accountName'
+import { bpsConnectionChanges, parseBpsAccountOptions } from '../utils/bpsConnection'
 import { accountSchedulingValues, concurrencyLimitInput } from '../utils/schedulingForm'
-import { emptyApiKeyAccountForm, isOpenAiApiKeyAccount, isOpenAiOAuthAccount, parseApiKeyConfiguration } from '../utils/upstreamApiKey'
+import { emptyApiKeyAccountForm, isOAuthTransportAccount, isOpenAiApiKeyAccount, parseApiKeyConfiguration } from '../utils/upstreamApiKey'
 
 export function useAccountEditor(options: {
   reloadAccounts: () => Promise<unknown>
@@ -35,7 +36,10 @@ export function useAccountEditor(options: {
   const savedConfiguration = shallowRef<ApiKeyConfiguration>()
   const oauthTransport = shallowRef<ApiKeyConfiguration['transport'] | ''>('')
   const savedOAuthTransport = shallowRef<ApiKeyConfiguration['transport']>()
-  const configurationReady = computed(() => !!savedConfiguration.value || !!savedOAuthTransport.value)
+  const bpsOptions = ref<BpsAccountOptions>()
+  const savedBpsOptions = shallowRef<BpsAccountOptions>()
+  const configurationReady = computed(() => !!savedConfiguration.value
+    || (!!savedOAuthTransport.value && (editingAccount.value?.provider !== 'bps' || !!savedBpsOptions.value)))
 
   async function loadConfiguration(accountId: string) {
     const requestId = configurationRequest.start()
@@ -43,10 +47,17 @@ export function useAccountEditor(options: {
       const detail = await getAccountDetail({ accountId }, { signal: configurationRequest.signal, silent: true })
       if (!configurationRequest.isCurrent(requestId))
         return
-      if (isOpenAiOAuthAccount(detail.account)) {
+      if (isOAuthTransportAccount(detail.account)) {
         const transport = detail.credentialConfiguration?.transport
         if (transport !== 'http' && transport !== 'prefer_websocket')
           throw new Error(t('accounts.editor.oauthUnavailable'))
+        if (detail.account.provider === 'bps') {
+          const configuration = parseBpsAccountOptions(detail.credentialConfiguration)
+          if (!configuration)
+            throw new Error(t('accounts.editor.oauthUnavailable'))
+          bpsOptions.value = { ...configuration }
+          savedBpsOptions.value = configuration
+        }
         oauthTransport.value = transport
         savedOAuthTransport.value = transport
         return
@@ -84,7 +95,7 @@ export function useAccountEditor(options: {
     }
     selectedGroupIds.value = account.groups.map(group => group.id)
     showEditModal.value = true
-    if (isOpenAiApiKeyAccount(account) || isOpenAiOAuthAccount(account))
+    if (isOpenAiApiKeyAccount(account) || isOAuthTransportAccount(account))
       void loadConfiguration(account.id)
   }
 
@@ -93,11 +104,11 @@ export function useAccountEditor(options: {
     if (!account || saving.value)
       return
     const isApiKey = isOpenAiApiKeyAccount(account)
-    const isOAuth = isOpenAiOAuthAccount(account)
+    const isOAuth = isOAuthTransportAccount(account)
     const configuration = isApiKey && configurationReady.value
       ? parseApiKeyConfiguration(apiKey.value)
       : undefined
-    if (isApiKey && !configuration)
+    if ((isApiKey && !configuration) || (isOAuth && !configurationReady.value))
       return
     const scheduling = accountSchedulingValues(concurrencyLimit.value, weight.value)
 
@@ -125,6 +136,9 @@ export function useAccountEditor(options: {
         || apiKey.value.protocol !== savedConfiguration.value?.protocol
         || apiKey.value.transport !== savedConfiguration.value?.transport
       )
+      const bpsChanges = account.provider === 'bps'
+        ? bpsConnectionChanges(bpsOptions.value, savedBpsOptions.value)
+        : undefined
       await updateAccount({
         ...settings,
         connection: connectionChanged && configuration
@@ -134,8 +148,8 @@ export function useAccountEditor(options: {
               transport: configuration.transport,
               apiKey: apiKey.value.apiKey || undefined,
             }
-          : isOAuth && configurationReady.value && oauthTransport.value && oauthTransport.value !== savedOAuthTransport.value
-            ? { transport: oauthTransport.value }
+          : isOAuth && configurationReady.value && oauthTransport.value && (oauthTransport.value !== savedOAuthTransport.value || bpsChanges)
+            ? { transport: oauthTransport.value, ...bpsChanges }
             : undefined,
       })
       showEditModal.value = false
@@ -163,11 +177,14 @@ export function useAccountEditor(options: {
     savedConfiguration.value = undefined
     oauthTransport.value = ''
     savedOAuthTransport.value = undefined
+    bpsOptions.value = undefined
+    savedBpsOptions.value = undefined
   }
 
   return {
     apiKey,
     oauthTransport,
+    bpsOptions,
     configurationReady,
     showEditModal,
     editingAccount,

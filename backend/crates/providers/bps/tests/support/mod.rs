@@ -19,6 +19,37 @@ struct StoredAccount {
     quota: Option<QuotaObservation>,
 }
 
+pub async fn set_connection_options(
+    store: &MemoryProviderAccountStore,
+    account: &ProviderAccount,
+    options: serde_json::Value,
+) -> ProviderAccount {
+    let loaded = store.load_current_credential(account.id()).await.unwrap();
+    let mut material = loaded.credential.expose_to_provider().clone();
+    material.extend(options.as_object().unwrap().clone());
+    let update = CredentialCasUpdate::new(
+        account.id().clone(),
+        loaded.account.revision(),
+        ProviderAccountUpdate {
+            account_id: account.id().clone(),
+            name: loaded.account.name().into(),
+            email: loaded.account.email().map(str::to_owned),
+            plan_type: loaded.account.plan_type().map(str::to_owned),
+        },
+        PlaintextCredential::new(material),
+        loaded.account.has_refresh_token(),
+        loaded.account.access_token_expires_at(),
+        loaded.account.next_refresh_at(),
+    )
+    .unwrap()
+    .preserving_profile();
+    assert!(matches!(
+        store.compare_and_swap_credential(update).await.unwrap(),
+        CredentialCasOutcome::Updated(_)
+    ));
+    store.get_account(account.id()).await.unwrap().unwrap()
+}
+
 #[derive(Default)]
 pub struct MemoryProviderAccountStore {
     accounts: Mutex<BTreeMap<ProviderAccountId, StoredAccount>>,

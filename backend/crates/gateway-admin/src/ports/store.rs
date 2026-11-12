@@ -192,7 +192,7 @@ pub trait AccountStore:
         account_id: &gateway_core::account::ProviderAccountId,
     ) -> AdminStoreResult<Option<CredentialDetails>>;
 
-    /// 插件按全局账号 ID 读取时，由数据库记录提供权威 Provider 归属
+    /// 按全局账号 ID 读取时，由数据库记录提供权威 Provider 归属
     async fn credential_details_by_id(
         &self,
         account_id: &gateway_core::account::ProviderAccountId,

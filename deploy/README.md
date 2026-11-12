@@ -46,7 +46,7 @@ BPS 授权独立于 Codex 授权，不能通过更改客户端标识转换已有
 套餐随 Excel OAuth 身份提取，额度通过 ChatGPT WHAM 查询及 BPS 响应头更新；上游未提供的数据保留未知
 更改服务地址会影响凭据与请求的发送目标，只应使用受信服务地址
 
-BPS 传输、图片输入和兼容策略在 `deploy/config.yaml` 的 `bps` 节点配置，作用于全部 BPS 账号，修改后重启应用：
+BPS 传输、图片输入和兼容策略的默认值在 `deploy/config.yaml` 的 `bps` 节点配置，修改后重启应用：
 
 ```yaml
 bps:
@@ -57,7 +57,9 @@ bps:
   ignore_encrypted_history: false
 ```
 
-以上为默认值。`upstream_transport` 可设为 `ws` 或 `sse`；WS 失败不自动切换 SSE，需要时显式修改配置
+以上为默认值。`upstream_transport` 可设为 `ws` 或 `sse`，供未单独设置传输方式的 BPS 账号使用
+管理端编辑 BPS 账号可选择 WS 或 SSE，并设置图片输入、省略图片、省略不支持的托管工具和忽略加密历史
+各项未单独设置时继承全局默认值，保存后对该账号的新请求生效，无需重启；WS 失败不自动切换 SSE
 `image_input_enabled` 关闭时拒绝图片；同时开启 `omit_images_when_disabled` 才替换为占位提示
 Codex 请求携带 `web_search`、`image_generation` 等托管工具时，需将 `omit_unsupported_hosted_tools` 设为 `true`，
 允许省略这些 BPS 不支持的声明；未开启时返回 400，管理端简单连接测试不验证这些客户端能力

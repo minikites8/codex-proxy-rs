@@ -9,6 +9,7 @@ use gateway_core::{
         UpstreamModelId,
     },
 };
+use gateway_protocol::bps::BpsImagePolicy;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
@@ -19,6 +20,14 @@ pub(crate) struct CatalogEntry {
     outbound_proxy: Option<gateway_core::account::OutboundProxy>,
     pub(crate) models: Vec<(String, String, Vec<String>)>,
     pub(crate) observed: Instant,
+    pub(crate) images: BpsImagePolicy,
+}
+
+struct DiscoveredModel {
+    label: String,
+    efforts: Vec<String>,
+    accounts: BTreeSet<ProviderAccountId>,
+    images: BpsImagePolicy,
 }
 
 pub(crate) fn parse(document: &Value) -> Result<Vec<(String, String, Vec<String>)>, BpsError> {
@@ -145,6 +154,7 @@ impl BpsProvider {
             outbound_proxy: account.outbound_proxy().cloned(),
             models,
             observed: started,
+            images: credential.request_policy(&self.config).images,
         };
         let mut catalogs = self.catalogs.write().expect("BPS catalog lock poisoned");
         // 并发读取按请求开始顺序发布，迟到的旧响应不能覆盖已观察到的权限撤回
@@ -159,6 +169,7 @@ impl BpsProvider {
             previous.models != entry.models
                 || previous.revision != entry.revision
                 || previous.outbound_proxy != entry.outbound_proxy
+                || previous.images != entry.images
         });
         catalogs.insert(account.id().clone(), entry.clone());
         if changed {
@@ -184,18 +195,24 @@ impl BpsProvider {
             .write()
             .expect("BPS catalog lock poisoned")
             .retain(|id, _| live.contains(id));
-        let mut models: BTreeMap<String, (String, Vec<String>, BTreeSet<ProviderAccountId>)> =
-            BTreeMap::new();
+        let mut models: BTreeMap<String, DiscoveredModel> = BTreeMap::new();
         let mut failed = false;
         for account in &accounts {
             match self.account_catalog(account, false).await {
                 Ok(catalog) => {
                     for (id, label, efforts) in catalog.models {
-                        models
-                            .entry(id)
-                            .or_insert_with(|| (label, efforts, BTreeSet::new()))
-                            .2
-                            .insert(account.id().clone());
+                        let entry = models.entry(id).or_insert_with(|| DiscoveredModel {
+                            label,
+                            efforts,
+                            accounts: BTreeSet::new(),
+                            images: BpsImagePolicy::Reject,
+                        });
+                        entry.accounts.insert(account.id().clone());
+                        if catalog.images == BpsImagePolicy::Enabled
+                            || entry.images == BpsImagePolicy::Reject
+                        {
+                            entry.images = catalog.images;
+                        }
                     }
                 }
                 Err(_) => failed = true,
@@ -207,31 +224,42 @@ impl BpsProvider {
         }
         models
             .into_iter()
-            .map(|(id, (label, efforts, accounts))| {
-                let default_effort = efforts
-                    .iter()
-                    .find(|effort| effort.as_str() == "medium")
-                    .or_else(|| efforts.first())
-                    .cloned();
-                let model = UpstreamModelId::new(id).map_err(|_| BpsError::Protocol)?;
-                let mut capabilities =
-                    ModelCapabilities::new(BTreeSet::from([OperationKind::Generate]), None)
-                        .with_feature(Feature::Tools, SupportLevel::Emulated)
-                        .with_feature(Feature::Reasoning, SupportLevel::Native);
-                if self.config.image_input_enabled {
-                    capabilities = capabilities.with_feature(Feature::Vision, SupportLevel::Native);
-                } else if self.config.omit_images_when_disabled {
-                    capabilities =
-                        capabilities.with_feature(Feature::Vision, SupportLevel::Emulated);
-                }
-                Ok(ProviderModelCapabilities::new(model, capabilities)
-                    .with_catalog_accounts(accounts)
-                    .with_presentation(
-                        ModelPresentation::new(Some(label), None)
-                            .with_reasoning(default_effort, efforts)
-                            .with_agent_tools(true, true),
-                    ))
-            })
+            .map(
+                |(
+                    id,
+                    DiscoveredModel {
+                        label,
+                        efforts,
+                        accounts,
+                        images,
+                    },
+                )| {
+                    let default_effort = efforts
+                        .iter()
+                        .find(|effort| effort.as_str() == "medium")
+                        .or_else(|| efforts.first())
+                        .cloned();
+                    let model = UpstreamModelId::new(id).map_err(|_| BpsError::Protocol)?;
+                    let mut capabilities =
+                        ModelCapabilities::new(BTreeSet::from([OperationKind::Generate]), None)
+                            .with_feature(Feature::Tools, SupportLevel::Emulated)
+                            .with_feature(Feature::Reasoning, SupportLevel::Native);
+                    if images == BpsImagePolicy::Enabled {
+                        capabilities =
+                            capabilities.with_feature(Feature::Vision, SupportLevel::Native);
+                    } else if images == BpsImagePolicy::Omit {
+                        capabilities =
+                            capabilities.with_feature(Feature::Vision, SupportLevel::Emulated);
+                    }
+                    Ok(ProviderModelCapabilities::new(model, capabilities)
+                        .with_catalog_accounts(accounts)
+                        .with_presentation(
+                            ModelPresentation::new(Some(label), None)
+                                .with_reasoning(default_effort, efforts)
+                                .with_agent_tools(true, true),
+                        ))
+                },
+            )
             .collect()
     }
 }

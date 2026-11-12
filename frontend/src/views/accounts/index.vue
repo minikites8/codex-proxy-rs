@@ -190,6 +190,7 @@ const {
 const {
   apiKey: editingApiKey,
   oauthTransport: editingOAuthTransport,
+  bpsOptions: editingBpsOptions,
   configurationReady,
   showEditModal,
   editingAccount,
@@ -443,6 +444,7 @@ const {
       v-model="showEditModal"
       v-model:api-key="editingApiKey"
       v-model:oauth-transport="editingOAuthTransport"
+      v-model:bps-options="editingBpsOptions"
       v-model:name="editingName"
       v-model:notes="editingNotes"
       v-model:enabled="schedulingEnabled"

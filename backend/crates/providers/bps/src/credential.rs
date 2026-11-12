@@ -1,7 +1,7 @@
 //! Excel OAuth 凭据导入与身份归一化，不接受 Codex 客户端 Token 配对
 
 use crate::{
-    BpsError,
+    BpsConfig, BpsError, BpsUpstreamTransport,
     config::{CLIENT_ID, PROVIDER},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -13,6 +13,22 @@ use gateway_admin::model::{
 use gateway_core::account::{OpaqueProviderData, ProviderAccountId};
 use serde_json::{Map, Value, json};
 
+const CONNECTION_FIELDS: [&str; 5] = [
+    "transport",
+    "image_input_enabled",
+    "omit_images_when_disabled",
+    "omit_unsupported_hosted_tools",
+    "ignore_encrypted_history",
+];
+
+pub(crate) fn inherit_connection(material: &mut Map<String, Value>, previous: &Map<String, Value>) {
+    for field in CONNECTION_FIELDS {
+        if let Some(value) = previous.get(field) {
+            material.entry(field).or_insert_with(|| value.clone());
+        }
+    }
+}
+
 pub(crate) struct Credential {
     material: Map<String, Value>,
     account_id: String,
@@ -20,6 +36,7 @@ pub(crate) struct Credential {
     email: Option<String>,
     plan_type: Option<String>,
     expires_at: Option<DateTime<Utc>>,
+    transport: Option<BpsUpstreamTransport>,
 }
 
 impl Credential {
@@ -128,6 +145,14 @@ impl Credential {
                 })
             });
         let mut material = material.clone();
+        let transport = material.get("transport").map(parse_transport).transpose()?;
+        if CONNECTION_FIELDS[1..].iter().any(|field| {
+            material
+                .get(*field)
+                .is_some_and(|value| !value.is_boolean())
+        }) {
+            return Err(BpsError::Credential);
+        }
         material.insert("client_id".into(), CLIENT_ID.into());
         material.insert("chatgpt_account_id".into(), account_id.clone().into());
         material.insert("schema_version".into(), 1.into());
@@ -138,7 +163,74 @@ impl Credential {
             email,
             plan_type,
             expires_at: Some(expires_at),
+            transport,
         })
+    }
+    pub(crate) fn transport(&self, default: BpsUpstreamTransport) -> BpsUpstreamTransport {
+        self.transport.unwrap_or(default)
+    }
+    pub(crate) fn configuration(&self, defaults: &BpsConfig) -> ProviderDocument {
+        let transport = match self.transport(defaults.upstream_transport) {
+            BpsUpstreamTransport::Ws => "prefer_websocket",
+            BpsUpstreamTransport::Sse => "http",
+        };
+        ProviderDocument::new(OpaqueProviderData::new(
+            json!({"transport":transport,
+                "image_input_enabled":self.boolean_option("image_input_enabled",defaults.image_input_enabled),
+                "omit_images_when_disabled":self.boolean_option("omit_images_when_disabled",defaults.omit_images_when_disabled),
+                "omit_unsupported_hosted_tools":self.boolean_option("omit_unsupported_hosted_tools",defaults.omit_unsupported_hosted_tools),
+                "ignore_encrypted_history":self.boolean_option("ignore_encrypted_history",defaults.ignore_encrypted_history)})
+                .as_object()
+                .expect("JSON object")
+                .clone(),
+        ))
+    }
+    fn boolean_option(&self, field: &str, default: bool) -> bool {
+        self.material
+            .get(field)
+            .and_then(Value::as_bool)
+            .unwrap_or(default)
+    }
+    pub(crate) fn request_policy(
+        &self,
+        defaults: &BpsConfig,
+    ) -> gateway_protocol::bps::BpsRequestPolicy {
+        use gateway_protocol::bps::{BpsImagePolicy, BpsRequestPolicy};
+        BpsRequestPolicy {
+            images: if self.boolean_option("image_input_enabled", defaults.image_input_enabled) {
+                BpsImagePolicy::Enabled
+            } else if self.boolean_option(
+                "omit_images_when_disabled",
+                defaults.omit_images_when_disabled,
+            ) {
+                BpsImagePolicy::Omit
+            } else {
+                BpsImagePolicy::Reject
+            },
+            omit_unsupported_hosted_tools: self.boolean_option(
+                "omit_unsupported_hosted_tools",
+                defaults.omit_unsupported_hosted_tools,
+            ),
+            ignore_encrypted_history: self.boolean_option(
+                "ignore_encrypted_history",
+                defaults.ignore_encrypted_history,
+            ),
+        }
+    }
+    pub(crate) fn update_connection(
+        &mut self,
+        connection: &Map<String, Value>,
+    ) -> Result<(), BpsError> {
+        if connection.iter().any(|(field, value)| {
+            !CONNECTION_FIELDS.contains(&field.as_str())
+                || (field != "transport" && !value.is_boolean())
+        }) {
+            return Err(BpsError::Connection);
+        }
+        let value = connection.get("transport").ok_or(BpsError::Connection)?;
+        self.transport = Some(parse_transport(value).map_err(|_| BpsError::Connection)?);
+        self.material.extend(connection.clone());
+        Ok(())
     }
     pub(crate) fn access_token(&self) -> &str {
         self.material["access_token"]
@@ -204,6 +296,7 @@ impl Credential {
         let material = response.as_object_mut().ok_or(BpsError::Protocol)?;
         material.insert("client_id".into(), CLIENT_ID.into());
         material.insert("chatgpt_account_id".into(), self.account_id.clone().into());
+        inherit_connection(material, &self.material);
         if !material.contains_key("refresh_token")
             && let Some(token) = self.refresh_token()
         {
@@ -214,6 +307,14 @@ impl Credential {
             return Err(BpsError::Credential);
         }
         Ok(refreshed)
+    }
+}
+
+fn parse_transport(value: &Value) -> Result<BpsUpstreamTransport, BpsError> {
+    match value.as_str() {
+        Some("http") => Ok(BpsUpstreamTransport::Sse),
+        Some("prefer_websocket") => Ok(BpsUpstreamTransport::Ws),
+        _ => Err(BpsError::Credential),
     }
 }
 

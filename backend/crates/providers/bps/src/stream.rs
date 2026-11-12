@@ -96,8 +96,17 @@ impl BpsProvider {
                 .map(|_| format!("bps-{scope}")),
         };
         let replays = self.replays(&scope);
-        let policy = self.config.request_policy();
-        let image_plan = if self.config.image_input_enabled {
+        let loaded = self
+            .ports
+            .accounts()
+            .load_credential(account.id(), account.revision())
+            .await
+            .map_err(|_| not_sent(BpsError::Unavailable))?;
+        let credential =
+            Credential::parse(loaded.credential.expose_to_provider()).map_err(not_sent)?;
+        let transport = credential.transport(self.config.upstream_transport);
+        let policy = credential.request_policy(&self.config);
+        let image_plan = if policy.images == gateway_protocol::bps::BpsImagePolicy::Enabled {
             Some(ImagePlan::prepare(source.clone()).map_err(not_sent)?)
         } else {
             None
@@ -111,14 +120,6 @@ impl BpsProvider {
         )
         .map_err(BpsError::from)
         .map_err(not_sent)?;
-        let loaded = self
-            .ports
-            .accounts()
-            .load_credential(account.id(), account.revision())
-            .await
-            .map_err(|_| not_sent(BpsError::Unavailable))?;
-        let credential =
-            Credential::parse(loaded.credential.expose_to_provider()).map_err(not_sent)?;
         let client = network::client(account.outbound_proxy()).map_err(not_sent)?;
         let url = self
             .config
@@ -128,7 +129,7 @@ impl BpsProvider {
             self.kind.clone(),
             model.clone(),
             account.id().clone(),
-            UpstreamTransport::new(match self.config.upstream_transport {
+            UpstreamTransport::new(match transport {
                 BpsUpstreamTransport::Ws => "websocket",
                 BpsUpstreamTransport::Sse => "http_sse",
             })
@@ -168,7 +169,7 @@ impl BpsProvider {
             let request = transport::GenerationRequest {
                 client: &client,
                 url,
-                transport: self.config.upstream_transport,
+                transport,
                 body,
                 headers: &headers,
                 credential: &credential,

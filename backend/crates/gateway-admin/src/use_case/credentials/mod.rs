@@ -4,7 +4,7 @@ mod flow;
 
 use std::sync::Arc;
 
-use gateway_core::{routing::ProviderKind, runtime::SnapshotControl};
+use gateway_core::{account::ProviderAccountId, routing::ProviderKind, runtime::SnapshotControl};
 
 use crate::{
     model::AdminError,
@@ -52,5 +52,19 @@ impl CredentialsService {
             self.snapshot.clone(),
             self.upstream_info.clone(),
         ))
+    }
+
+    /// 账号连接变更使用持久化的 Provider 归属，不由 API 指定平台
+    pub async fn for_account(
+        &self,
+        id: &ProviderAccountId,
+    ) -> Result<ProviderCredentials, AdminError> {
+        let details = self
+            .accounts
+            .credential_details_by_id(id)
+            .await
+            .map_err(|error| super::map_store_error(error, "provider account credentials"))?
+            .ok_or_else(|| AdminError::not_found("服务商凭据不存在"))?;
+        self.for_provider(&details.credential.provider_kind)
     }
 }

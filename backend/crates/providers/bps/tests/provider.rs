@@ -341,7 +341,10 @@ async fn request_rejections_preserve_safe_reasons_in_management_diagnostics() {
 async fn codex_compatibility_omits_hosted_tools_and_encrypted_history_but_keeps_images() {
     use futures::StreamExt as _;
 
-    let fixture = Fixture::new(Capacity::default()).await;
+    let mut fixture = Fixture::new(Capacity::default()).await;
+    fixture.account = crate::support::set_connection_options(&fixture.accounts, &fixture.account,
+        json!({"image_input_enabled":true,"omit_unsupported_hosted_tools":true,"ignore_encrypted_history":true})
+    ).await;
     fixture.catalog(true).await;
     Mock::given(method("POST"))
         .and(path("/basispoints/api/responses"))
@@ -356,8 +359,7 @@ async fn codex_compatibility_omits_hosted_tools_and_encrypted_history_but_keeps_
         provider_bps::BpsConfig {
             base_url: fixture.server.uri(),
             upstream_transport: provider_bps::BpsUpstreamTransport::Sse,
-            omit_unsupported_hosted_tools: true,
-            ignore_encrypted_history: true,
+            image_input_enabled: false,
             ..Default::default()
         },
         crate::support::ports_with_leases(fixture.accounts.clone(), fixture.capacity.clone()),
@@ -433,6 +435,65 @@ async fn codex_compatibility_omits_hosted_tools_and_encrypted_history_but_keeps_
         })
     }));
     assert_eq!(fixture.capacity.active.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn vision_request_selects_an_account_that_allows_images() {
+    use futures::StreamExt as _;
+    let mut fixture = Fixture::new(Capacity::default()).await;
+    fixture.account = crate::support::set_connection_options(
+        &fixture.accounts,
+        &fixture.account,
+        json!({"image_input_enabled":false,"omit_images_when_disabled":false}),
+    )
+    .await;
+    let second = ProviderAccount::new(
+        ProviderAccountId::new("acct_vision_enabled").unwrap(),
+        ProviderKind::new("bps").unwrap(),
+        "images".into(),
+        Some("user-test".into()),
+        "oauth".into(),
+        CredentialRevision::new(1).unwrap(),
+        None,
+    )
+    .with_profile(None, Some("workspace-test".into()), None)
+    .with_account_facts(
+        true,
+        CredentialState::Ready,
+        QuotaState::unknown(),
+        None,
+        None,
+    );
+    fixture.accounts.create_account(NewProviderAccount {
+        account:second.clone(),model_access:None,
+        credential:PlaintextCredential::new(json!({"access_token":crate::credential::token("app_fnr0pYvVwwFDocDumLG3H2Bp"),"image_input_enabled":true}).as_object().unwrap().clone())
+    }).await.unwrap();
+    fixture.catalog(true).await;
+    Mock::given(method("POST")).and(path("/basispoints/api/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(format!("data: {}\n\n",json!({"type":"response.completed","response":{"id":"resp_vision","status":"completed","output":[]}})),"text/event-stream"))
+        .expect(1).mount(&fixture.server).await;
+    let scope = Arc::new(FrozenAccountScope::new(
+        Arc::new(RuntimeAccountDirectory::new(
+            [fixture.account.id().clone(), second.id().clone()]
+                .into_iter()
+                .map(|id| {
+                    (
+                        id,
+                        RuntimeAccount::new(ProviderKind::new("bps").unwrap(), BTreeSet::new()),
+                    )
+                })
+                .collect(),
+        )),
+        ClientRoutingScope::all_accounts(),
+    ));
+    let mut stream = fixture.provider.clone().execute(
+        fixture.request_with_source(json!({"model":"model","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.test/image.png"}]}]})),
+        fixture.context(scope,policy(),CancellationToken::new()),
+    ).await.unwrap();
+    assert_eq!(stream.metadata().provider_account_id(), second.id());
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
 }
 
 #[tokio::test]

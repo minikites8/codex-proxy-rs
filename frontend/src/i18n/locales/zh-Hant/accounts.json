@@ -186,7 +186,17 @@
       "notesHelp": "最多 500 字，留空可清除備註",
       "oauthUnavailable": "該賬號沒有 OAuth 上游設置",
       "apiKeyUnavailable": "該賬號沒有 API密鑰上游設置",
-      "saved": "賬號已更新"
+      "saved": "賬號已更新",
+      "bps": {
+        "images": "圖片輸入",
+        "imagesHelp": "允許上傳和使用原生圖片附件",
+        "omitImages": "關閉圖片時省略圖片",
+        "omitImagesHelp": "僅關閉圖片輸入時生效，以佔位文字替換圖片",
+        "omitHostedTools": "省略不支援的託管工具",
+        "omitHostedToolsHelp": "僅自動工具選擇時省略，強制選擇仍拒絕",
+        "ignoreEncryptedHistory": "忽略加密歷史",
+        "ignoreEncryptedHistoryHelp": "替換為佔位文字，保留可讀取的明文"
+      }
     },
     "filters": {
       "allGroups": "全部分組",

@@ -768,6 +768,26 @@ mod actions {
     }
 
     #[test]
+    fn account_connection_options_accept_booleans_and_reject_other_types() {
+        let request = json!({"accountId":"acct_bps","enabled":true,"concurrencyLimit":null,"weight":1,"groupIds":[],
+            "connection":{"transport":"http","imageInputEnabled":false,"omitImagesWhenDisabled":true,"omitUnsupportedHostedTools":true,"ignoreEncryptedHistory":false}});
+        serde_json::from_value::<UpdateAccountRequest>(request.clone())
+            .unwrap()
+            .validate()
+            .unwrap();
+        for field in [
+            "imageInputEnabled",
+            "omitImagesWhenDisabled",
+            "omitUnsupportedHostedTools",
+            "ignoreEncryptedHistory",
+        ] {
+            let mut invalid = request.clone();
+            invalid["connection"][field] = json!("invalid");
+            assert!(serde_json::from_value::<UpdateAccountRequest>(invalid).is_err());
+        }
+    }
+
+    #[test]
     fn authorization_accepts_optional_names_with_the_same_text_limits() {
         for name in ["", " ", "My account"] {
             let request: StartAccountAuthorizationRequest = serde_json::from_value(json!({

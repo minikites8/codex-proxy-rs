@@ -11,6 +11,8 @@ use gateway_core::{
 pub enum BpsError {
     #[error("invalid BPS configuration")]
     Configuration,
+    #[error("invalid BPS connection settings")]
+    Connection,
     #[error("invalid BPS image input")]
     InvalidImage,
     #[error("invalid BPS credential")]
@@ -38,6 +40,10 @@ pub enum BpsError {
 impl BpsError {
     pub(crate) fn admin(self) -> ProviderAdminError {
         let (kind, message) = match self {
+            Self::Connection => (
+                ProviderAdminErrorKind::Invalid,
+                "BPS 连接设置包含不支持的字段或值",
+            ),
             Self::InvalidImage => (
                 ProviderAdminErrorKind::Invalid,
                 "BPS 图片格式、引用或大小不受支持",

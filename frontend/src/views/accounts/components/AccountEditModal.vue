@@ -2,7 +2,7 @@
 import type { FormRules } from '@codex-proxy/ui'
 import type { ApiKeyAccountForm } from '../utils/upstreamApiKey'
 
-import type { Account, AccountGroupRef, AccountModelAccess } from '@/api'
+import type { Account, AccountGroupRef, AccountModelAccess, BpsAccountOptions } from '@/api'
 
 import { ZButton, ZDialog, ZForm, ZFormItem, ZSegmented } from '@codex-proxy/ui'
 
@@ -12,8 +12,9 @@ import AccountPlanBadge from '@/components/account/AccountPlanBadge.vue'
 import ProviderIconGroup from '@/components/ProviderIconGroup.vue'
 import { useAccountApiKeyFormRules } from '../composables/useAccountApiKeyFormRules'
 import { useAccountSettingsFormRules } from '../composables/useAccountSettingsFormRules'
-import { isOpenAiApiKeyAccount, isOpenAiOAuthAccount } from '../utils/upstreamApiKey'
+import { isOAuthTransportAccount, isOpenAiApiKeyAccount } from '../utils/upstreamApiKey'
 import AccountApiKeyFields from './AccountApiKeyFields.vue'
+import AccountBpsFields from './AccountBpsFields.vue'
 import AccountIdentityCell from './AccountIdentityCell.vue'
 import AccountSettingsFields from './AccountSettingsFields.vue'
 
@@ -35,6 +36,7 @@ const { t } = useI18n({ useScope: 'global' })
 const open = defineModel<boolean>({ required: true })
 const apiKey = defineModel<ApiKeyAccountForm>('apiKey', { required: true })
 const oauthTransport = defineModel<ApiKeyAccountForm['transport']>('oauthTransport', { required: true })
+const bpsOptions = defineModel<BpsAccountOptions | undefined>('bpsOptions', { required: true })
 const transportOptions = [
   { label: 'WS', value: 'prefer_websocket' },
   { label: 'SSE', value: 'http' },
@@ -67,7 +69,7 @@ const rules = computed<FormRules>(() => ({
   ...apiKeyRules.value,
 }))
 const saveDisabled = computed(() => !props.account || props.groupsLoading
-  || (isOpenAiApiKeyAccount(props.account) && !props.configurationReady))
+  || ((isOpenAiApiKeyAccount(props.account) || isOAuthTransportAccount(props.account)) && !props.configurationReady))
 
 watch(open, () => formRef.value?.clearValidate())
 
@@ -125,9 +127,10 @@ async function requestSave() {
       >
         <template #connection>
           <AccountApiKeyFields v-if="isOpenAiApiKeyAccount(account)" v-model="apiKey" editing :disabled="saving || !configurationReady" />
-          <ZFormItem v-else-if="isOpenAiOAuthAccount(account)" :label="t('accounts.editor.transportLabel')">
+          <ZFormItem v-else-if="isOAuthTransportAccount(account)" :label="t('accounts.editor.transportLabel')">
             <ZSegmented v-model="oauthTransport" class="w-40" :aria-label="t('accounts.editor.transportLabel')" :options="transportOptions" :disabled="saving || !configurationReady" />
           </ZFormItem>
+          <AccountBpsFields v-if="account.provider === 'bps' && bpsOptions" v-model="bpsOptions" :disabled="saving || !configurationReady" />
         </template>
       </AccountSettingsFields>
     </ZForm>

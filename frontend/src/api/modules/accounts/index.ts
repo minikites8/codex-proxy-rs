@@ -42,6 +42,7 @@ export type {
   AccountSummary,
   AccountUpdateResponse,
   ApiKeyConfiguration,
+  BpsAccountOptions,
 } from './management'
 
 export {

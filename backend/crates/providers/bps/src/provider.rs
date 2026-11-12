@@ -16,6 +16,7 @@ use gateway_core::{
         provider::{Provider, ProviderRequest, ProviderSelectionObservation, ProviderStream},
     },
     error::{ProviderError, ProviderErrorKind},
+    operation::{CapabilityRequirements, Feature},
     provider_ports::{
         ProviderConcurrencyPool, ProviderLeaseAcquisition, ProviderLeaseGuard,
         ProviderLeaseRequest, ProviderSchedulingLeaseRequest, ProviderStorePorts,
@@ -79,6 +80,7 @@ impl BpsProvider {
     async fn select(
         &self,
         model: &str,
+        requirements: &CapabilityRequirements,
         context: &AttemptContext,
     ) -> Result<
         (
@@ -90,7 +92,7 @@ impl BpsProvider {
     > {
         let policy = context.account_selection_policy();
         let select = |queue| async move {
-            self.select_with_queue(model, context, queue)
+            self.select_with_queue(model, requirements, context, queue)
                 .await
                 .map_err(SelectionFailure)
         };
@@ -129,6 +131,7 @@ impl BpsProvider {
     async fn select_with_queue(
         &self,
         model: &str,
+        requirements: &CapabilityRequirements,
         context: &AttemptContext,
         queue: ConcurrencyQueuePolicy,
     ) -> Result<
@@ -198,7 +201,11 @@ impl BpsProvider {
                 }
                 if !context.is_diagnostic_required_account() {
                     match self.account_catalog(&account, false).await {
-                        Ok(catalog) if catalog.models.iter().any(|(id, _, _)| id == model) => {}
+                        Ok(catalog)
+                            if catalog.models.iter().any(|(id, _, _)| id == model)
+                                && (!requirements.features().contains(&Feature::Vision)
+                                    || catalog.images
+                                        != gateway_protocol::bps::BpsImagePolicy::Reject) => {}
                         Ok(_) => continue,
                         Err(_) => {
                             catalog_failed = true;
@@ -436,15 +443,15 @@ impl Provider for BpsProvider {
                 ProviderError::new(ProviderErrorKind::Unsupported, UpstreamSendState::NotSent)
             })?
             .clone();
+        let requirements = request.operation().capability_requirements();
         let (account, lease, selection) = tokio::select! {
             biased;
             ()=context.cancellation().cancelled()=>return Err(ProviderError::new(ProviderErrorKind::Cancelled,UpstreamSendState::NotSent)),
             ()=context.deadline().wait()=>return Err(ProviderError::new(ProviderErrorKind::Timeout,UpstreamSendState::NotSent)),
-            result=self.select(model.as_str(),&context)=>result?,
+            result=self.select(model.as_str(),&requirements,&context)=>result?,
         };
         let account_id = account.id().clone();
         let terminal_context = context.clone();
-        let requirements = request.operation().capability_requirements();
         context
             .execute_middleware(
                 request.operation().clone(),

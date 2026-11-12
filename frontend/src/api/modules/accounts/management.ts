@@ -53,7 +53,16 @@ interface AccountListParams {
 }
 
 interface AccountUpdateParam {
-  connection?: { baseUrl?: string, protocol?: ApiKeyConfiguration['protocol'], transport: ApiKeyConfiguration['transport'], apiKey?: string }
+  connection?: {
+    baseUrl?: string
+    protocol?: ApiKeyConfiguration['protocol']
+    transport: ApiKeyConfiguration['transport']
+    apiKey?: string
+    imageInputEnabled?: boolean
+    omitImagesWhenDisabled?: boolean
+    omitUnsupportedHostedTools?: boolean
+    ignoreEncryptedHistory?: boolean
+  }
   outboundProxyUrl?: string
   outboundProxyId?: string
   accountId: string
@@ -98,6 +107,13 @@ export interface ApiKeyConfiguration {
   base_url: string
   protocol: 'responses' | 'messages'
   transport: 'http' | 'prefer_websocket'
+}
+
+export interface BpsAccountOptions {
+  image_input_enabled: boolean
+  omit_images_when_disabled: boolean
+  omit_unsupported_hosted_tools: boolean
+  ignore_encrypted_history: boolean
 }
 
 export interface AccountConcurrencyEntry {

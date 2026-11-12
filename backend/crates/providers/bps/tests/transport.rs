@@ -295,6 +295,106 @@ async fn websocket_failed_terminal_keeps_error_and_usage() {
 }
 
 #[tokio::test]
+async fn account_transport_overrides_the_opposite_global_default() {
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    for (transport, default, expected) in [
+        ("http", provider_bps::BpsUpstreamTransport::Ws, "http_sse"),
+        (
+            "prefer_websocket",
+            provider_bps::BpsUpstreamTransport::Sse,
+            "websocket",
+        ),
+    ] {
+        let (ws_base, listener) = server().await;
+        let sse = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/basispoints/api/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(format!("data: {}\n\n", completed()), "text/event-stream"),
+            )
+            .expect(u64::from(transport == "http"))
+            .mount(&sse)
+            .await;
+        let task = if transport == "prefer_websocket" {
+            Some(tokio::spawn(async move {
+                let mut socket = accept(listener).await;
+                let _request = payload(&mut socket).await;
+                send(&mut socket, completed()).await;
+            }))
+        } else {
+            None
+        };
+        let accounts = Arc::new(crate::support::MemoryProviderAccountStore::default());
+        let account = ProviderAccount::new(
+            ProviderAccountId::new("acct_transport_override").unwrap(),
+            ProviderKind::new("bps").unwrap(),
+            "transport".into(),
+            Some("user-test".into()),
+            "oauth".into(),
+            CredentialRevision::new(1).unwrap(),
+            None,
+        )
+        .with_profile(None, Some("workspace-test".into()), None)
+        .with_account_facts(
+            false,
+            gateway_core::account::CredentialState::Ready,
+            gateway_core::account::QuotaState::unknown(),
+            None,
+            None,
+        );
+        accounts.create_account(NewProviderAccount {
+            account: account.clone(), model_access: None,
+            credential: PlaintextCredential::new(json!({"access_token":crate::credential::token("app_fnr0pYvVwwFDocDumLG3H2Bp"),"transport":transport}).as_object().unwrap().clone()),
+        }).await.unwrap();
+        let mut response = crate::stream::stream_with_config(
+            provider_bps::BpsConfig {
+                base_url: if transport == "http" {
+                    sse.uri()
+                } else {
+                    ws_base
+                },
+                upstream_transport: default,
+                ..Default::default()
+            },
+            "openai",
+            crate::support::ports_with(accounts),
+            account,
+            json!({"model":"model","input":"hello"}),
+            RequestAttemptContext::new(
+                ModelRequestId::new("req_override").unwrap(),
+                ClientApiKeyId::new("key_override").unwrap(),
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.metadata().transport().as_str(), expected);
+        let mut completed = false;
+        while let Some(event) = timeout(Duration::from_secs(5), response.next())
+            .await
+            .unwrap()
+        {
+            completed |= event
+                .unwrap()
+                .wire_event()
+                .is_some_and(|event| event.data()["type"] == "response.completed");
+        }
+        assert!(
+            completed,
+            "{transport} must deliver the upstream terminal event"
+        );
+        if let Some(task) = task {
+            joined(task).await;
+        }
+    }
+}
+
+#[tokio::test]
 async fn handshake_rejection_preserves_original_error_without_sending_generation() {
     use wiremock::{
         Mock, MockServer, ResponseTemplate,

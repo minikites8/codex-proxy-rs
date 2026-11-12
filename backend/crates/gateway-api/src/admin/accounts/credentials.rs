@@ -272,7 +272,7 @@ impl UpdateAccountRequest {
     }
 }
 
-/// 编辑 OpenAI 账号的连接设置；OAuth 仅接受传输方式
+/// 编辑账号连接设置，具体字段资格由所属 Provider 校验
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AccountConnectionUpdateRequest {
@@ -280,6 +280,10 @@ pub struct AccountConnectionUpdateRequest {
     pub base_url: Option<String>,
     pub transport: String,
     pub api_key: Option<String>,
+    pub image_input_enabled: Option<bool>,
+    pub omit_images_when_disabled: Option<bool>,
+    pub omit_unsupported_hosted_tools: Option<bool>,
+    pub ignore_encrypted_history: Option<bool>,
 }
 
 impl AccountConnectionUpdateRequest {
@@ -318,6 +322,19 @@ impl AccountConnectionUpdateRequest {
         }
         if let Some(key) = self.api_key {
             material.insert("api_key".to_owned(), Value::String(key));
+        }
+        for (field, value) in [
+            ("image_input_enabled", self.image_input_enabled),
+            ("omit_images_when_disabled", self.omit_images_when_disabled),
+            (
+                "omit_unsupported_hosted_tools",
+                self.omit_unsupported_hosted_tools,
+            ),
+            ("ignore_encrypted_history", self.ignore_encrypted_history),
+        ] {
+            if let Some(value) = value {
+                material.insert(field.to_owned(), Value::Bool(value));
+            }
         }
         ProviderDocument::new(OpaqueProviderData::new(material))
     }

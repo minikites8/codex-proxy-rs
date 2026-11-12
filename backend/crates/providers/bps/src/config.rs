@@ -23,7 +23,7 @@ pub enum BpsUpstreamTransport {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct BpsConfig {
-    /// 生成传输，默认使用 WebSocket
+    /// 未单独设置账号传输时的默认值，缺省使用 WebSocket
     pub upstream_transport: BpsUpstreamTransport,
     /// BPS 服务根地址
     pub base_url: String,
@@ -57,20 +57,6 @@ impl Default for BpsConfig {
 }
 
 impl BpsConfig {
-    pub(crate) fn request_policy(&self) -> gateway_protocol::bps::BpsRequestPolicy {
-        use gateway_protocol::bps::{BpsImagePolicy, BpsRequestPolicy};
-        BpsRequestPolicy {
-            images: if self.image_input_enabled {
-                BpsImagePolicy::Enabled
-            } else if self.omit_images_when_disabled {
-                BpsImagePolicy::Omit
-            } else {
-                BpsImagePolicy::Reject
-            },
-            omit_unsupported_hosted_tools: self.omit_unsupported_hosted_tools,
-            ignore_encrypted_history: self.ignore_encrypted_history,
-        }
-    }
     pub(crate) fn validate(&self) -> Result<(), BpsError> {
         for value in [&self.base_url, &self.auth_base_url, &self.quota_base_url] {
             let url = Url::parse(value).map_err(|_| BpsError::Configuration)?;

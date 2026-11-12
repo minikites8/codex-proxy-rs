@@ -116,6 +116,60 @@ async fn authoritative_access_denial_publishes_an_empty_catalog() {
 }
 
 #[tokio::test]
+async fn vision_capabilities_follow_account_options_over_global_defaults() {
+    use gateway_core::operation::{CapabilityRequirements, Feature, OperationKind};
+    for (enabled, omit) in [(false, false), (false, true), (true, false)] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/basispoints/api/responses/access"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    json!({"allowed":true,"model_catalog":{"models":[{"id":"model"}]}}),
+                ),
+            )
+            .mount(&server)
+            .await;
+        let accounts = Arc::new(crate::support::MemoryProviderAccountStore::default());
+        let id = ProviderAccountId::new("acct_vision_options").unwrap();
+        add_account(
+            &accounts,
+            id.as_str(),
+            &crate::credential::token("app_fnr0pYvVwwFDocDumLG3H2Bp"),
+        )
+        .await;
+        let account = accounts.get_account(&id).await.unwrap().unwrap();
+        crate::support::set_connection_options(
+            &accounts,
+            &account,
+            json!({"image_input_enabled":enabled,"omit_images_when_disabled":omit}),
+        )
+        .await;
+        let provider = provider_bps::initialize(
+            provider_bps::BpsConfig {
+                base_url: server.uri(),
+                image_input_enabled: !enabled,
+                omit_images_when_disabled: !omit,
+                ..Default::default()
+            },
+            crate::support::ports_with(accounts),
+        )
+        .unwrap()
+        .core_provider();
+        let models = provider.query_model_capabilities().await.unwrap();
+        let matched = models[0].capabilities().match_requirements(
+            &CapabilityRequirements::new(OperationKind::Generate).require(Feature::Vision),
+        );
+        if enabled {
+            assert!(matched.unwrap().is_empty());
+        } else if omit {
+            assert!(matched.unwrap().contains(&Feature::Vision));
+        } else {
+            assert!(matched.is_none());
+        }
+    }
+}
+
+#[tokio::test]
 async fn catalog_exposes_only_permitted_models_and_their_reasoning_choices() {
     let server = MockServer::start().await;
     let accounts = Arc::new(crate::support::MemoryProviderAccountStore::default());

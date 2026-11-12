@@ -186,7 +186,17 @@
       "notesHelp": "最多 500 字，留空可清除备注",
       "oauthUnavailable": "该账号没有 OAuth 上游设置",
       "apiKeyUnavailable": "该账号没有 API密钥上游设置",
-      "saved": "账号已更新"
+      "saved": "账号已更新",
+      "bps": {
+        "images": "图片输入",
+        "imagesHelp": "允许上传和使用原生图片附件",
+        "omitImages": "关闭图片时省略图片",
+        "omitImagesHelp": "仅关闭图片输入时生效，以占位文字替换图片",
+        "omitHostedTools": "省略不支持的托管工具",
+        "omitHostedToolsHelp": "仅自动工具选择时省略，强制选择仍拒绝",
+        "ignoreEncryptedHistory": "忽略加密历史",
+        "ignoreEncryptedHistoryHelp": "替换为占位文字，保留可读取的明文"
+      }
     },
     "filters": {
       "allGroups": "全部分组",

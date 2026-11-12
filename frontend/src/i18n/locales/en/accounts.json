@@ -186,7 +186,17 @@
       "notesHelp": "Up to 500 characters, leave blank to clear notes",
       "oauthUnavailable": "This account has no OAuth upstream settings",
       "apiKeyUnavailable": "This account has no upstream API key settings",
-      "saved": "Account updated"
+      "saved": "Account updated",
+      "bps": {
+        "images": "Image input",
+        "imagesHelp": "Allow uploads and native image attachments",
+        "omitImages": "Omit images when disabled",
+        "omitImagesHelp": "Replace images with placeholders when image input is off",
+        "omitHostedTools": "Omit unsupported hosted tools",
+        "omitHostedToolsHelp": "Only with automatic tool choice, forced tools are still rejected",
+        "ignoreEncryptedHistory": "Ignore encrypted history",
+        "ignoreEncryptedHistoryHelp": "Use placeholders and retain readable plaintext"
+      }
     },
     "filters": {
       "allGroups": "All",
