@@ -19,9 +19,14 @@ impl Observation {
             headers_ms: Some(elapsed_ms(started_at)),
             ..ProviderResponseTimings::default()
         };
+        let mut response = ProviderResponseObservation::new(transport);
+        // WS 升级成功不代表业务响应 HTTP 状态，避免非流式出口把 101 当作失败
+        if status != 101 {
+            response = response.with_status_code(status);
+        }
         Self {
             started_at,
-            response: ProviderResponseObservation::new(transport).with_status_code(status),
+            response,
             timings,
         }
     }

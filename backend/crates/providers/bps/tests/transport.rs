@@ -248,7 +248,9 @@ async fn websocket_is_cold_and_uses_account_proxy_and_native_images() {
     let mut timings = gateway_core::event::ProviderResponseTimings::default();
     while let Some(event) = response.next().await {
         let event = event.unwrap();
-        timings = event.response_observation().unwrap().timings();
+        let observation = event.response_observation().unwrap();
+        assert_eq!(observation.status_code(), None);
+        timings = observation.timings();
         if let Some(event) = event.wire_event() {
             wire.push(event.data().clone());
         }

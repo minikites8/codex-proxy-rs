@@ -24,14 +24,10 @@ async fn output_phases_freeze_and_failure_preserves_observation() {
         crate::stream::server(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
             .await;
     let mut stream = crate::stream::stream(&server, "openai").await;
-    let first = stream
-        .next()
-        .await
-        .unwrap()
-        .unwrap()
-        .response_observation()
-        .unwrap()
-        .timings();
+    let event = stream.next().await.unwrap().unwrap();
+    let observation = event.response_observation().unwrap();
+    assert_eq!(observation.status_code(), Some(200));
+    let first = observation.timings();
     assert!(first.first_token_ms.is_some());
     assert_eq!(first.first_text_ms, None);
     assert_eq!(first.first_reasoning_ms, None);
