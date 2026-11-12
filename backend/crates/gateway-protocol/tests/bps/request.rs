@@ -32,6 +32,39 @@ fn translates_text_and_reasoning_without_changing_model() {
 }
 
 #[test]
+fn service_tiers_use_the_default_bps_request() {
+    let prepare = |source: &serde_json::Value| {
+        BpsRequest::prepare(
+            source,
+            "model",
+            RequestIdentity {
+                task_id: "task".into(),
+                turn_id: "turn".into(),
+                prompt_cache_key: None,
+            },
+            &[],
+        )
+    };
+    let source = json!({"input":"hello", "reasoning":{"effort":"high"}});
+    let default = prepare(&source).unwrap();
+    assert!(default.body().get("service_tier").is_none());
+    for tier in [
+        json!(null),
+        json!("auto"),
+        json!("default"),
+        json!("priority"),
+        json!("flex"),
+        json!("ultrafast"),
+        json!("future-tier"),
+    ] {
+        let mut source = source.clone();
+        source["service_tier"] = tier.clone();
+        let request = prepare(&source).unwrap_or_else(|error| panic!("tier {tier}: {error}"));
+        assert_eq!(request.body(), default.body(), "tier {tier}");
+    }
+}
+
+#[test]
 fn rejects_capabilities_that_cannot_be_preserved() {
     for patch in [
         json!({"previous_response_id":"resp_other"}),

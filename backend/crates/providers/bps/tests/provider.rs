@@ -280,11 +280,6 @@ async fn request_rejections_preserve_safe_reasons_in_management_diagnostics() {
             "basispoints_request_invalid",
         ),
         (
-            json!({"service_tier":"priority"}),
-            "Basispoints does not support the requested service tier.",
-            "basispoints_request_invalid",
-        ),
-        (
             json!({"input":[{"role":"user","content":[{"type":"input_image","image_url":"http://example.com/PRIVATE_REQUEST_TEXT.png"}]}]}),
             "Invalid or unsupported Basispoints image format, reference, or size.",
             "basispoints_image_invalid",
@@ -360,7 +355,7 @@ async fn codex_compatibility_omits_hosted_tools_and_encrypted_history_but_keeps_
     .unwrap()
     .core_provider();
     let source = json!({
-        "model":"model", "stream":true, "store":false,
+        "model":"model", "stream":true, "store":false, "service_tier":"priority",
         "tool_choice":"auto", "parallel_tool_calls":true,
         "reasoning":{"effort":"high"},
         "tools":[
@@ -401,6 +396,7 @@ async fn codex_compatibility_omits_hosted_tools_and_encrypted_history_but_keeps_
         .find(|request| request.url.path() == "/basispoints/api/responses")
         .unwrap();
     let body: serde_json::Value = serde_json::from_slice(&generation.body).unwrap();
+    assert!(body.get("service_tier").is_none());
     let encoded = body.to_string();
     assert!(encoded.contains("Hosted tools unavailable"));
     assert!(encoded.contains("exec_command"));

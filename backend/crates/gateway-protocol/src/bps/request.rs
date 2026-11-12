@@ -71,15 +71,6 @@ impl BpsRequest {
             ));
         }
         if source
-            .get("service_tier")
-            .and_then(Value::as_str)
-            .is_some_and(|tier| !matches!(tier, "auto" | "default"))
-        {
-            return Err(BpsProtocolError(
-                "Basispoints does not support the requested service tier.",
-            ));
-        }
-        if source
             .get("text")
             .and_then(|text| text.get("format"))
             .is_some_and(|format| {
@@ -201,6 +192,7 @@ impl BpsRequest {
             }
         };
         // BPS 固定工具由上游提供，客户端工具仅通过显式目录和信封中继
+        // service_tier 统一采用 BPS 默认档位，不写入上游白名单
         let mut body = json!({"model":model,"model_selection":"explicit","stream":true,"store":false,
             "input":prologue,"reasoning_effort":effort,
             "metadata":{"task_id":identity.task_id,"turn_id":identity.turn_id,"agent_iteration":iteration.to_string()}});

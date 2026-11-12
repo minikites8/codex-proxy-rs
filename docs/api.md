@@ -774,7 +774,7 @@ Responses Lite 的 `input[].additional_tools` 和 `input[].tool_search_output` �
 `configuration_update`、`item_reference` 和 `compaction_trigger` 返回明确的能力错误，不静默丢弃历史或控制指令
 
 当前适配支持文本、推理、客户端工具和图片输入，不提供独立图片生成 API、托管工具执行、结构化输出或 `previous_response_id` 续接
-`tool_choice` 支持 `auto`、`none`，`service_tier` 支持 `auto`、`default`
+`tool_choice` 支持 `auto`、`none`；客户端 `service_tier` 统一使用 BPS 默认档位，不向上游传递，不保证优先级或加速
 请求按 BPS 白名单构造，不透传 `max_output_tokens`、`temperature`、`top_p`；Messages 的 `max_tokens`
 仅保留入口兼容，BPS 不保证该输出上限。默认将加密推理历史原样交给上游判断，不保证跨账号或客户端有效
 
