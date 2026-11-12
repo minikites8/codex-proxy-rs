@@ -35,6 +35,28 @@ fn generate_request(body: Value) -> DecodedGenerationRequest {
 }
 
 #[test]
+fn responses_lite_should_force_serial_tool_calls() {
+    let body = json!({
+        "model": "gpt-test",
+        "input": "hello",
+        "parallel_tool_calls": true
+    });
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-openai-internal-codex-responses-lite",
+        HeaderValue::from_static("true"),
+    );
+    let decoded = gateway_api::openai::responses::decode_request_with_headers(
+        body.to_string().as_bytes(),
+        &headers,
+        64 * 1024 * 1024,
+    )
+    .expect("Responses Lite request should decode");
+
+    assert_eq!(openai_wire_body(&decoded)["parallel_tool_calls"], json!(false));
+}
+
+#[test]
 fn decoder_should_attach_only_identified_codex_inference_turns() {
     let body = json!({"model":"smart-code", "input":"hello", "client_metadata": {
         "thread_id":"thread", "turn_id":"turn", "x-codex-turn-metadata": r#"{"request_kind":"turn"}"#

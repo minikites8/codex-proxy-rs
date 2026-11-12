@@ -338,6 +338,14 @@ pub(super) fn decode_request_object(
         .unwrap_or(ContinuationIntent::None);
 
     request_headers.apply_subagent(&mut object);
+    if request_headers
+        .responses_lite
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+    {
+        // Responses Lite 只支持串行工具调用，上游要求该字段显式为 false
+        object.insert("parallel_tool_calls".to_owned(), Value::Bool(false));
+    }
     let frame_turn_metadata = match source {
         RequestDecodeSource::Http => None,
         RequestDecodeSource::WebSocketFrame => frame_turn_metadata(&object),
