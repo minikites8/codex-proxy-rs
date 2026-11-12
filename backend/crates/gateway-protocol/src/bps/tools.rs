@@ -87,7 +87,7 @@ impl ToolCatalog {
     ) -> Result<(), BpsProtocolError> {
         let tools = value
             .as_array()
-            .ok_or(BpsProtocolError("Invalid Basispoints tool catalog."))?;
+            .ok_or(BpsProtocolError::new("Invalid Basispoints tool catalog."))?;
         for definition in tools {
             let kind = definition
                 .get("type")
@@ -101,7 +101,7 @@ impl ToolCatalog {
                 .get("name")
                 .and_then(Value::as_str)
                 .filter(|name| !name.is_empty())
-                .ok_or(BpsProtocolError(
+                .ok_or(BpsProtocolError::new(
                     "Basispoints supports declared function and custom tools only.",
                 ))?;
             let qualified = namespace.map_or_else(
@@ -113,7 +113,7 @@ impl ToolCatalog {
                     self.collect(
                         definition
                             .get("tools")
-                            .ok_or(BpsProtocolError("Invalid tool namespace."))?,
+                            .ok_or(BpsProtocolError::new("Invalid tool namespace."))?,
                         Some(&qualified),
                         omit_hosted,
                     )?;
@@ -122,7 +122,7 @@ impl ToolCatalog {
                 Some("function") => ToolKind::Function,
                 Some("custom") => ToolKind::Custom,
                 _ => {
-                    return Err(BpsProtocolError(
+                    return Err(BpsProtocolError::new(
                         "Basispoints supports declared function and custom tools only.",
                     ));
                 }
@@ -138,7 +138,7 @@ impl ToolCatalog {
                             )
                             .build(schema)
                             .map_err(|_| {
-                                BpsProtocolError(
+                                BpsProtocolError::new(
                                     "Invalid tool parameter schema or external reference.",
                                 )
                             })
@@ -161,7 +161,7 @@ impl ToolCatalog {
                 )
                 .is_some()
             {
-                return Err(BpsProtocolError("Duplicate Basispoints tool name."));
+                return Err(BpsProtocolError::new("Duplicate Basispoints tool name."));
             }
         }
         Ok(())
@@ -230,18 +230,20 @@ impl ToolCatalog {
                         .unwrap_or_else(|| encode_call(&item))?;
                     client_kinds.insert(id.clone(), item["type"].clone());
                     if calls.insert(id, native.clone()).is_some() {
-                        return Err(BpsProtocolError("Duplicate historical tool call ID."));
+                        return Err(BpsProtocolError::new("Duplicate historical tool call ID."));
                     }
                     translated.push(native);
                 }
                 Some("function_call_output" | "custom_tool_call_output") => {
                     let id = call_id(&item)?.to_owned();
                     if !results.insert(id.clone()) {
-                        return Err(BpsProtocolError("Duplicate historical tool result ID."));
+                        return Err(BpsProtocolError::new(
+                            "Duplicate historical tool result ID.",
+                        ));
                     }
                     if !calls.contains_key(&id) {
                         let replay = replays.iter().find(|replay|call_id(&replay.native).ok()==Some(id.as_str()))
-                            .ok_or(BpsProtocolError("Basispoints tool history is unavailable. Resend the complete tool call and result."))?;
+                            .ok_or(BpsProtocolError::new("Basispoints tool history is unavailable. Resend the complete tool call and result."))?;
                         translated.push(replay.native.clone());
                         client_kinds.insert(id.clone(), replay.client["type"].clone());
                         calls.insert(id.clone(), replay.native.clone());
@@ -252,7 +254,7 @@ impl ToolCatalog {
                         "function_call_output"
                     };
                     if item["type"] != expected {
-                        return Err(BpsProtocolError(
+                        return Err(BpsProtocolError::new(
                             "Historical tool result type does not match its call.",
                         ));
                     }
@@ -280,7 +282,7 @@ impl ToolCatalog {
             if let Some(id) = item.get("id").and_then(Value::as_str)
                 && (id.is_empty() || !item_ids.insert(id.to_owned()))
             {
-                return Err(BpsProtocolError(
+                return Err(BpsProtocolError::new(
                     "Duplicate or empty Basispoints output item ID.",
                 ));
             }
@@ -288,20 +290,20 @@ impl ToolCatalog {
                 Some("message" | "reasoning" | "compaction") => continue,
                 Some("function_call") => {}
                 _ => {
-                    return Err(BpsProtocolError(
+                    return Err(BpsProtocolError::new(
                         "Basispoints returned an unsupported native output item.",
                     ));
                 }
             }
             let id = call_id(item)?;
             if !seen.insert(id.to_owned()) || (!parallel && !replays.is_empty()) {
-                return Err(BpsProtocolError("Invalid Basispoints tool batch."));
+                return Err(BpsProtocolError::new("Invalid Basispoints tool batch."));
             }
             if !matches!(
                 item.get("name").and_then(Value::as_str),
                 Some("run_officejs" | "functions.run_officejs")
             ) {
-                return Err(BpsProtocolError(
+                return Err(BpsProtocolError::new(
                     "Basispoints returned an unsupported native tool.",
                 ));
             }
@@ -318,7 +320,7 @@ impl ToolCatalog {
                         args.get("code")
                             .filter(|value| value.is_string())
                             .cloned()
-                            .ok_or(BpsProtocolError(
+                            .ok_or(BpsProtocolError::new(
                                 "Invalid Basispoints custom tool envelope.",
                             ))?,
                     )
@@ -328,26 +330,28 @@ impl ToolCatalog {
                         .get("name")
                         .or_else(|| envelope.get("tool"))
                         .and_then(Value::as_str)
-                        .ok_or(BpsProtocolError("Invalid Basispoints tool target."))?;
+                        .ok_or(BpsProtocolError::new("Invalid Basispoints tool target."))?;
                     let arguments = envelope
                         .get("arguments")
                         .or_else(|| envelope.get("args"))
                         .filter(|value| value.is_object())
                         .cloned()
-                        .ok_or(BpsProtocolError("Invalid Basispoints function arguments."))?;
+                        .ok_or(BpsProtocolError::new(
+                            "Invalid Basispoints function arguments.",
+                        ))?;
                     (name.to_owned(), ToolKind::Function, arguments)
                 };
             let tool =
                 self.0
                     .get(&name)
                     .filter(|tool| tool.kind == kind)
-                    .ok_or(BpsProtocolError(
+                    .ok_or(BpsProtocolError::new(
                         "Basispoints returned an undeclared client tool.",
                     ))?;
             if let Some(validator) = &tool.validator
                 && !validator.is_valid(&payload)
             {
-                return Err(BpsProtocolError(
+                return Err(BpsProtocolError::new(
                     "Basispoints function arguments do not match the declared schema.",
                 ));
             }
@@ -373,9 +377,11 @@ fn history_declarations<'a>(
     namespace: Option<&str>,
     selected: &mut BTreeMap<String, HistoryDeclaration<'a>>,
 ) -> Result<(), BpsProtocolError> {
-    let tools = value.and_then(Value::as_array).ok_or(BpsProtocolError(
-        "Invalid Basispoints historical tool catalog.",
-    ))?;
+    let tools = value
+        .and_then(Value::as_array)
+        .ok_or(BpsProtocolError::new(
+            "Invalid Basispoints historical tool catalog.",
+        ))?;
     for definition in tools {
         let kind = definition
             .get("type")
@@ -402,7 +408,7 @@ fn history_declarations<'a>(
             )
         });
         if kind == "namespace" {
-            let qualified = qualified.ok_or(BpsProtocolError("Invalid tool namespace."))?;
+            let qualified = qualified.ok_or(BpsProtocolError::new("Invalid tool namespace."))?;
             history_declarations(definition.get("tools"), Some(&qualified), selected)?;
             continue;
         }
@@ -417,7 +423,7 @@ fn history_declarations<'a>(
             )
             .is_some()
         {
-            return Err(BpsProtocolError("Duplicate Basispoints tool name."));
+            return Err(BpsProtocolError::new("Duplicate Basispoints tool name."));
         }
     }
     Ok(())
@@ -444,7 +450,7 @@ fn call_id(item: &Value) -> Result<&str, BpsProtocolError> {
     item.get("call_id")
         .and_then(Value::as_str)
         .filter(|id| !id.is_empty())
-        .ok_or(BpsProtocolError("Missing Basispoints tool call ID."))
+        .ok_or(BpsProtocolError::new("Missing Basispoints tool call ID."))
 }
 
 fn parse_object(value: Option<&Value>) -> Result<Value, BpsProtocolError> {
@@ -455,7 +461,7 @@ fn parse_object(value: Option<&Value>) -> Result<Value, BpsProtocolError> {
     };
     value
         .filter(Value::is_object)
-        .ok_or(BpsProtocolError("Invalid Basispoints tool envelope."))
+        .ok_or(BpsProtocolError::new("Invalid Basispoints tool envelope."))
 }
 
 fn encode_call(item: &Value) -> Result<Value, BpsProtocolError> {
@@ -464,7 +470,7 @@ fn encode_call(item: &Value) -> Result<Value, BpsProtocolError> {
         .get("name")
         .and_then(Value::as_str)
         .filter(|name| !name.is_empty())
-        .ok_or(BpsProtocolError("Missing historical tool name."))?;
+        .ok_or(BpsProtocolError::new("Missing historical tool name."))?;
     let name = item.get("namespace").and_then(Value::as_str).map_or_else(
         || name.to_owned(),
         |namespace| format!("{namespace}.{name}"),
@@ -474,7 +480,7 @@ fn encode_call(item: &Value) -> Result<Value, BpsProtocolError> {
             format!("codex2api.custom/{name}"),
             item.get("input")
                 .and_then(Value::as_str)
-                .ok_or(BpsProtocolError("Invalid historical custom input."))?
+                .ok_or(BpsProtocolError::new("Invalid historical custom input."))?
                 .to_owned(),
         )
     } else {

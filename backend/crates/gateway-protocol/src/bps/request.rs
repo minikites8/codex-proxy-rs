@@ -58,15 +58,15 @@ impl BpsRequest {
     ) -> Result<Self, BpsProtocolError> {
         let source = source
             .as_object()
-            .ok_or(BpsProtocolError("Invalid Basispoints request."))?;
+            .ok_or(BpsProtocolError::new("Invalid Basispoints request."))?;
         if model.trim().is_empty() {
-            return Err(BpsProtocolError("Basispoints requires a model."));
+            return Err(BpsProtocolError::new("Basispoints requires a model."));
         }
         if source
             .get("previous_response_id")
             .is_some_and(|id| !id.is_null() && id.as_str() != Some(""))
         {
-            return Err(BpsProtocolError(
+            return Err(BpsProtocolError::new(
                 "Basispoints requires complete history instead of previous_response_id.",
             ));
         }
@@ -77,7 +77,7 @@ impl BpsRequest {
                 !format.is_null() && format.get("type").and_then(Value::as_str) != Some("text")
             })
         {
-            return Err(BpsProtocolError(
+            return Err(BpsProtocolError::new(
                 "Basispoints does not support structured output.",
             ));
         }
@@ -90,14 +90,14 @@ impl BpsRequest {
                 .get("tool_choice")
                 .is_some_and(|value| !value.is_null() && !value.is_string())
         {
-            return Err(BpsProtocolError(
+            return Err(BpsProtocolError::new(
                 "Basispoints supports tool_choice auto or none only.",
             ));
         }
         let parallel_tools = match source.get("parallel_tool_calls") {
             Some(Value::Bool(value)) => *value,
             None => true,
-            _ => return Err(BpsProtocolError("Invalid parallel_tool_calls.")),
+            _ => return Err(BpsProtocolError::new("Invalid parallel_tool_calls.")),
         };
         let tools = if choice == "none" {
             ToolCatalog::default()
@@ -108,7 +108,7 @@ impl BpsRequest {
             Some(Value::String(text)) => vec![message("user", text)],
             Some(Value::Array(items)) => items.clone(),
             _ => {
-                return Err(BpsProtocolError(
+                return Err(BpsProtocolError::new(
                     "Basispoints input must be text or a Responses item array.",
                 ));
             }
@@ -138,24 +138,22 @@ impl BpsRequest {
                 }
                 "function_call" | "reasoning" | "compaction" => {}
                 "configuration_update" => {
-                    return Err(BpsProtocolError(
+                    return Err(BpsProtocolError::new(
                         "Basispoints does not support configuration_update history. Start a new conversation with the desired reasoning effort.",
                     ));
                 }
                 "item_reference" => {
-                    return Err(BpsProtocolError(
+                    return Err(BpsProtocolError::new(
                         "Basispoints requires complete history instead of item_reference.",
                     ));
                 }
                 "compaction_trigger" => {
-                    return Err(BpsProtocolError(
+                    return Err(BpsProtocolError::new(
                         "Basispoints does not support compaction_trigger requests through this endpoint.",
                     ));
                 }
-                _ => {
-                    return Err(BpsProtocolError(
-                        "Unsupported Basispoints history item. Resend complete plaintext history.",
-                    ));
+                kind => {
+                    return Err(BpsProtocolError::unsupported_history_type(kind));
                 }
             }
         }
@@ -172,7 +170,7 @@ impl BpsRequest {
             .and_then(Value::as_str)
             .is_some_and(|mode| mode != "standard")
         {
-            return Err(BpsProtocolError(
+            return Err(BpsProtocolError::new(
                 "Basispoints does not support the requested reasoning mode.",
             ));
         }
@@ -186,7 +184,7 @@ impl BpsRequest {
             "none" | "minimal" => "low",
             "max" | "ultra" => "xhigh",
             _ => {
-                return Err(BpsProtocolError(
+                return Err(BpsProtocolError::new(
                     "Unsupported Basispoints reasoning effort.",
                 ));
             }
@@ -234,17 +232,17 @@ fn validate_content(
                     Some("input_image") if images == super::BpsImagePolicy::Enabled => {
                         super::policy::validate_image(
                             part.as_object()
-                                .ok_or(BpsProtocolError("Invalid image content."))?,
+                                .ok_or(BpsProtocolError::new("Invalid image content."))?,
                             tool_output,
                         )?
                     }
                     Some("input_image") => {
-                        return Err(BpsProtocolError(
+                        return Err(BpsProtocolError::new(
                             "Basispoints image input is not supported by this provider.",
                         ));
                     }
                     _ => {
-                        return Err(BpsProtocolError(
+                        return Err(BpsProtocolError::new(
                             "Unsupported Basispoints content. Resend plaintext content.",
                         ));
                     }
@@ -252,6 +250,6 @@ fn validate_content(
             }
             Ok(())
         }
-        _ => Err(BpsProtocolError("Invalid Basispoints content.")),
+        _ => Err(BpsProtocolError::new("Invalid Basispoints content.")),
     }
 }

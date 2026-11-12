@@ -280,6 +280,16 @@ async fn request_rejections_preserve_safe_reasons_in_management_diagnostics() {
             "basispoints_request_invalid",
         ),
         (
+            json!({"input":[{"type":"web_search_call","content":"PRIVATE_REQUEST_TEXT","encrypted_content":"PRIVATE_REQUEST_TEXT"}]}),
+            "Unsupported Basispoints history item type 'web_search_call'.",
+            "basispoints_request_invalid",
+        ),
+        (
+            json!({"input":[{"type":"web_search_call\nPRIVATE_REQUEST_TEXT","content":"PRIVATE_REQUEST_TEXT"}]}),
+            "Unsupported Basispoints history item type '<invalid>'.",
+            "basispoints_request_invalid",
+        ),
+        (
             json!({"input":[{"role":"user","content":[{"type":"input_image","image_url":"http://example.com/PRIVATE_REQUEST_TEXT.png"}]}]}),
             "Invalid or unsupported Basispoints image format, reference, or size.",
             "basispoints_image_invalid",

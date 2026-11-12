@@ -40,14 +40,14 @@ impl BpsResponse {
     /// 成功终态中的工具身份或信封不合法时拒绝整批工具
     pub fn event(&mut self, mut event: Value) -> Result<Vec<Value>, BpsProtocolError> {
         if self.terminal {
-            return Err(BpsProtocolError(
+            return Err(BpsProtocolError::new(
                 "Basispoints emitted data after its terminal event.",
             ));
         }
         let kind = event
             .get("type")
             .and_then(Value::as_str)
-            .ok_or(BpsProtocolError("Invalid Basispoints event."))?;
+            .ok_or(BpsProtocolError::new("Invalid Basispoints event."))?;
         if matches!(
             kind,
             "error" | "response.failed" | "response.cancelled" | "response.incomplete"
@@ -61,7 +61,9 @@ impl BpsResponse {
             let response = event
                 .get_mut("response")
                 .and_then(Value::as_object_mut)
-                .ok_or(BpsProtocolError("Invalid Basispoints terminal response."))?;
+                .ok_or(BpsProtocolError::new(
+                    "Invalid Basispoints terminal response.",
+                ))?;
             if response
                 .get("status")
                 .and_then(Value::as_str)
@@ -74,7 +76,9 @@ impl BpsResponse {
             let output = response
                 .get_mut("output")
                 .and_then(Value::as_array_mut)
-                .ok_or(BpsProtocolError("Missing Basispoints terminal output."))?;
+                .ok_or(BpsProtocolError::new(
+                    "Missing Basispoints terminal output.",
+                ))?;
             let replays = self.tools.translate_output(output, self.parallel_tools)?;
             let mut events = Vec::new();
             for (index, item) in output.iter().enumerate() {
@@ -122,7 +126,7 @@ impl BpsResponse {
                 }
                 Some("message" | "reasoning" | "compaction") => {}
                 _ => {
-                    return Err(BpsProtocolError(
+                    return Err(BpsProtocolError::new(
                         "Basispoints emitted an unsupported native output item.",
                     ));
                 }
@@ -148,7 +152,7 @@ impl BpsResponse {
         if self.terminal {
             Ok(())
         } else {
-            Err(BpsProtocolError(
+            Err(BpsProtocolError::new(
                 "Basispoints stream ended before its terminal event.",
             ))
         }

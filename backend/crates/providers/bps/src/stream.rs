@@ -263,7 +263,7 @@ impl BpsProvider {
                     } else {
                         let usage=response_usage(&value);
                         bridge.event(value).map_err(|error| {
-                            // 协议错误只包含闭集静态原因，不记录原始事件、工具输入或凭据
+                            // 协议错误只含安全原因，不记录原始事件、工具输入或凭据
                             tracing::warn!(provider="bps",stage="bridge_protocol_conversion",reason=%error,"BPS response conversion rejected");
                             let error=ProviderError::new(ProviderErrorKind::Protocol,UpstreamSendState::Sent).with_source(error).with_retry_prohibited();
                             let mut facts=ProviderEvent::observation(observation.snapshot());

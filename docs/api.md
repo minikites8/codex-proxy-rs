@@ -772,6 +772,7 @@ BPS 上游 WS 每轮建立独立连接，终态或请求取消后释放，不复
 Responses Lite 的 `input[].additional_tools` 和 `input[].tool_search_output` 读取为客户端工具目录，声明项不发送为 BPS 对话
 当轮顶层声明优先；历史同名声明采用最后一次定义，并按最终选中的 Schema 校验调用
 `configuration_update`、`item_reference` 和 `compaction_trigger` 返回明确的能力错误，不静默丢弃历史或控制指令
+其他未支持的历史项在错误中显示其 `type`；类型名为空、超过 64 字节或包含 ASCII 字母、数字、`_`、`-`、`.` 以外的字符时显示 `<invalid>`，不回显历史正文
 
 当前适配支持文本、推理、客户端工具和图片输入，不提供独立图片生成 API、托管工具执行、结构化输出或 `previous_response_id` 续接
 `tool_choice` 支持 `auto`、`none`；客户端 `service_tier` 统一使用 BPS 默认档位，不向上游传递，不保证优先级或加速

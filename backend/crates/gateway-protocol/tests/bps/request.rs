@@ -115,3 +115,38 @@ fn unsupported_history_controls_report_the_specific_capability_without_dropping_
         assert!(!error.message().contains("PRIVATE_TASK"));
     }
 }
+
+#[test]
+fn unsupported_history_reports_only_a_bounded_safe_item_type() {
+    let max_type = "x".repeat(64);
+    let oversized_type = "x".repeat(65);
+    for (kind, shown) in [
+        ("web_search_call", "web_search_call"),
+        ("image_generation_call", "image_generation_call"),
+        ("future.item-v2", "future.item-v2"),
+        (max_type.as_str(), max_type.as_str()),
+        (oversized_type.as_str(), "<invalid>"),
+        ("", "<invalid>"),
+        ("bad\nPRIVATE_TYPE", "<invalid>"),
+        ("'PRIVATE_TYPE'", "<invalid>"),
+        ("未知类型", "<invalid>"),
+    ] {
+        let error = BpsRequest::prepare(
+            &json!({"input":[{"type":kind,"content":"PRIVATE_HISTORY","encrypted_content":"PRIVATE_CIPHERTEXT","arguments":"PRIVATE_ARGUMENTS"}]}),
+            "model",
+            RequestIdentity {
+                task_id: "t".into(),
+                turn_id: "r".into(),
+                prompt_cache_key: None,
+            },
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.message(),
+            format!("Unsupported Basispoints history item type '{shown}'."),
+            "type {kind:?}"
+        );
+        assert!(!error.to_string().contains("PRIVATE"));
+    }
+}

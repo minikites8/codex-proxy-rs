@@ -47,7 +47,7 @@ pub(super) fn normalize_input(
                     }))
     }) && !policy.ignore_encrypted_history
     {
-        return Err(BpsProtocolError(
+        return Err(BpsProtocolError::new(
             "Basispoints cannot read a new encrypted agent assignment. Resend its original plaintext task.",
         ));
     }
@@ -71,7 +71,7 @@ pub(super) fn normalize_input(
             && policy.ignore_encrypted_history
         {
             item.as_object_mut()
-                .ok_or(BpsProtocolError("Invalid Basispoints history item."))?
+                .ok_or(BpsProtocolError::new("Invalid Basispoints history item."))?
                 .remove("encrypted_content");
             // 密文不能跨通道解释，保留同项明文并添加明确占位上下文
             if let Some(summary) = item.get_mut("summary").and_then(Value::as_array_mut) {
@@ -112,7 +112,7 @@ pub(super) fn normalize_input(
         if kind == "agent_message" && policy.ignore_encrypted_history {
             let object = item
                 .as_object()
-                .ok_or(BpsProtocolError("Invalid agent history item."))?;
+                .ok_or(BpsProtocolError::new("Invalid agent history item."))?;
             let metadata = object
                 .iter()
                 .filter(|(key, _)| key.as_str() != "content" && key.as_str() != "encrypted_content")
@@ -138,7 +138,7 @@ pub(super) fn normalize_input(
                     .unwrap()
                     .push(json!({"type":"input_text","text":text})),
                 None if top_encrypted => {}
-                _ => return Err(BpsProtocolError("Invalid historical agent content.")),
+                _ => return Err(BpsProtocolError::new("Invalid historical agent content.")),
             }
             if top_encrypted {
                 replacement["content"].as_array_mut().unwrap().push(json!({"type":"input_text","text":"[Encrypted history omitted by request policy.]"}));
@@ -186,7 +186,7 @@ pub(super) fn normalize_input(
                     {
                         validate_image(
                             part.as_object()
-                                .ok_or(BpsProtocolError("Invalid image content."))?,
+                                .ok_or(BpsProtocolError::new("Invalid image content."))?,
                             true,
                         )?;
                         detached.push(part.clone());
@@ -218,7 +218,7 @@ pub(super) fn validate_image(
     if part.get("detail").is_some_and(|detail| {
         !detail.is_null() && !matches!(detail.as_str(), Some("auto" | "low" | "high" | "original"))
     }) {
-        return Err(BpsProtocolError("Invalid Basispoints image detail."));
+        return Err(BpsProtocolError::new("Invalid Basispoints image detail."));
     }
     let file = part
         .get("file_id")
@@ -250,7 +250,7 @@ pub(super) fn validate_image(
                 })
         });
     if !file && !url {
-        return Err(BpsProtocolError(
+        return Err(BpsProtocolError::new(
             "Basispoints image input requires a prepared native attachment or HTTPS image URL.",
         ));
     }
