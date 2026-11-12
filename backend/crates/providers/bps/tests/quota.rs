@@ -451,3 +451,83 @@ async fn disabled_account_diagnostic_does_not_persist_passive_quota() {
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn local_rolling_usage_is_independent_of_shared_quota_and_survives_all_read_paths() {
+    let server = MockServer::start().await;
+    let (provider, accounts, account) = fixture(&server).await;
+    let local = gateway_admin::model::accounts::AccountUsage {
+        account_id: account.id().as_str().to_owned(),
+        request_count: 2,
+        success_count: 2,
+        input_tokens: Some(100),
+        output_tokens: Some(20),
+        cached_input_tokens: None,
+        cache_write_input_tokens: None,
+        reasoning_output_tokens: None,
+        image_input_tokens: None,
+        image_output_tokens: None,
+        image_request_count: 0,
+        image_request_failed_count: 0,
+        total_tokens: Some(120),
+        cost_coverage: Default::default(),
+        costs: Vec::new(),
+        last_used_at: None,
+        request_buckets: Vec::new(),
+        models: Vec::new(),
+    };
+    for refresh in [false, true, false] {
+        if refresh {
+            mount(&server, usage()).await;
+        }
+        let quota = provider
+            .quota(ProviderQuotaRequest {
+                account_id: account.id().clone(),
+                refresh,
+                rolling_usage: Some(local.clone()),
+            })
+            .await
+            .unwrap();
+        let (window, _) = quota.usage_window().unwrap();
+        assert_eq!(window.local_usage.as_ref(), Some(&local));
+        assert_eq!(window.window_seconds, Some(86_400));
+        assert!(window.used_percent.is_none());
+        assert!(window.reset_at.is_none());
+        assert!(
+            quota
+                .windows
+                .iter()
+                .filter(|window| window.limit_id.is_some())
+                .all(|window| window.local_usage.is_none())
+        );
+    }
+    let current = accounts.get_account(account.id()).await.unwrap().unwrap();
+    let record = crate::support::account_record(&current);
+    let quotas = provider
+        .read_quotas(&[ProviderQuotaReadRequest {
+            account: &record,
+            rolling_usage: Some(&local),
+        }])
+        .await;
+    assert_eq!(
+        quotas[0]
+            .as_ref()
+            .unwrap()
+            .usage_window()
+            .unwrap()
+            .0
+            .local_usage
+            .as_ref(),
+        Some(&local)
+    );
+    let missing = provider
+        .quota(ProviderQuotaRequest {
+            account_id: account.id().clone(),
+            refresh: false,
+            rolling_usage: None,
+        })
+        .await
+        .unwrap();
+    assert!(missing.usage_window().is_none());
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}

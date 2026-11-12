@@ -9,6 +9,7 @@ mod feedback;
 mod images;
 mod network;
 mod oauth;
+mod observation;
 mod pricing;
 mod provider;
 mod quota;

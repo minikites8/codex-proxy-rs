@@ -176,11 +176,14 @@ impl ProviderAdmin for BpsProvider {
             .map_err(|_| BpsError::Unavailable.admin())?
             .filter(|account| account.provider() == &self.kind)
             .ok_or_else(|| BpsError::Credential.admin())?;
-        if request.refresh {
-            self.refresh_quota(&account).await.map_err(BpsError::admin)
+        let mut quota = if request.refresh {
+            self.refresh_quota(&account).await
         } else {
-            self.read_quota(&account).await.map_err(BpsError::admin)
+            self.read_quota(&account).await
         }
+        .map_err(BpsError::admin)?;
+        crate::quota::attach_rolling_usage(&mut quota, request.rolling_usage);
+        Ok(quota)
     }
     async fn read_quotas(
         &self,

@@ -2,6 +2,7 @@
 mod admin;
 mod credential;
 mod oauth;
+mod observation;
 mod pricing;
 mod support;
 

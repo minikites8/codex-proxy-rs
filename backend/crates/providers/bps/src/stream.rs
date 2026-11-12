@@ -143,6 +143,7 @@ impl BpsProvider {
             .get(self.kind.as_str())
             .and_then(|models| models.get(model.as_str()))
             .cloned();
+        let response_transport = metadata.transport().clone();
         let stream = async_stream::try_stream! {
             // execute 只准备账号与租约，实际发送发生在首次 poll 之后
             let prepared = if let Some(plan) = image_plan.filter(ImagePlan::has_uploads) {
@@ -177,6 +178,10 @@ impl BpsProvider {
                 account: &account,
             };
             let transport::Opening { response, payload } = request.open().await?;
+            let status = response.status();
+            let mut observation = crate::observation::Observation::new(
+                context.timing_started_at(), response_transport, status.as_u16(),
+            );
             let quota_observed_at = SystemTime::now();
             // 额度头在流消费前落库，正文失败也不能丢失已经收到的明确额度事实
             if context
@@ -197,7 +202,6 @@ impl BpsProvider {
                     ),
                 }
             }
-            let status = response.status();
             let response =
                 if !status.is_success() && !(payload.is_some() && status == reqwest::StatusCode::SWITCHING_PROTOCOLS) {
                     let retry_after = response
@@ -222,11 +226,12 @@ impl BpsProvider {
                             content_type,
                             body,
                         ));
+                    let mut facts = ProviderEvent::observation(observation.snapshot());
                     if let Some(usage) = usage {
-                        error = error.with_atomic_client_events(vec![ProviderEvent::canonical(
-                            GatewayEvent::Usage(usage),
-                        )]);
+                        facts = ProviderEvent::canonical(GatewayEvent::Usage(usage));
+                        facts.attach_observation(observation.snapshot());
                     }
+                    error = error.with_atomic_client_events(vec![facts]);
                     if let Some(delay) = retry_after {
                         error = error.with_retry_after(delay);
                     }
@@ -241,6 +246,7 @@ impl BpsProvider {
             let mut terminal = false;
             while let Some(value) = upstream.next().await {
                 let value = value?;
+                let timing_changed = observation.observe(&value);
                     let failed=matches!(value.get("type").and_then(Value::as_str),Some("error"|"response.failed"|"response.cancelled"))
                         || (value.get("type").and_then(Value::as_str)==Some("response.completed") && (matches!(value.pointer("/response/status").and_then(Value::as_str),Some("failed"|"cancelled")) || value.pointer("/response/error").is_some_and(|error|!error.is_null())));
                     let events=if failed {
@@ -248,7 +254,8 @@ impl BpsProvider {
                         let retry_after=value.pointer("/response/error/headers/retry-after").or_else(||value.pointer("/error/headers/retry-after")).and_then(Value::as_str).and_then(gateway_protocol::openai::parse_retry_after_seconds).map(Duration::from_secs);
                         self.record_failure(&account,&context,kind,retry_after).await;
                         let value=bridge.event(value).map_err(|_|BpsError::Protocol.execution(UpstreamSendState::Sent))?.pop().ok_or_else(||BpsError::Protocol.execution(UpstreamSendState::Sent))?;
-                        let facts=canonical.event(value)?;
+                        let mut facts=canonical.event(value)?;
+                        facts.attach_observation(observation.snapshot());
                         let mut error=ProviderError::new(kind,UpstreamSendState::Sent).with_atomic_client_events(vec![facts]).with_retry_prohibited();
                         if let Some(status)=status {error=error.with_status(status);}
                         if let Some(delay)=retry_after {error=error.with_retry_after(delay);}
@@ -259,11 +266,20 @@ impl BpsProvider {
                             // 协议错误只包含闭集静态原因，不记录原始事件、工具输入或凭据
                             tracing::warn!(provider="bps",stage="bridge_protocol_conversion",reason=%error,"BPS response conversion rejected");
                             let error=ProviderError::new(ProviderErrorKind::Protocol,UpstreamSendState::Sent).with_source(error).with_retry_prohibited();
-                            if let Some(usage)=usage {error.with_atomic_client_events(vec![ProviderEvent::canonical(GatewayEvent::Usage(usage))])}else{error}
+                            let mut facts=ProviderEvent::observation(observation.snapshot());
+                            if let Some(usage)=usage {facts=ProviderEvent::canonical(GatewayEvent::Usage(usage));facts.attach_observation(observation.snapshot());}
+                            error.with_atomic_client_events(vec![facts])
                         })?
                     };
                     if bridge.is_terminal() {self.remember(&scope,bridge.replays());terminal=true;}
-                    for event in events {yield canonical.event(event)?;}
+                    if events.is_empty() && timing_changed {
+                        yield ProviderEvent::observation(observation.snapshot());
+                    }
+                    for event in events {
+                        let mut event = canonical.event(event)?;
+                        event.attach_observation(observation.snapshot());
+                        yield event;
+                    }
                     if terminal {break;}
             }
             if !terminal {Err(BpsError::Protocol.execution(UpstreamSendState::Sent))?;}

@@ -30,7 +30,7 @@ use wiremock::{
     matchers::{method, path},
 };
 
-async fn stream(server: &MockServer, protocol: &str) -> ProviderStream {
+pub(crate) async fn stream(server: &MockServer, protocol: &str) -> ProviderStream {
     stream_with_pricing(server, protocol, BTreeMap::new()).await
 }
 
@@ -208,7 +208,7 @@ pub(crate) async fn stream_with_config(
         .await
 }
 
-async fn server(response: ResponseTemplate) -> MockServer {
+pub(crate) async fn server(response: ResponseTemplate) -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/basispoints/api/responses/access"))
@@ -255,9 +255,11 @@ async fn truncated_sse_fails_after_preserving_text() {
     let mut stream = stream(&server, "openai").await;
     let mut text = false;
     let mut failed = false;
+    let mut timings = gateway_core::event::ProviderResponseTimings::default();
     while let Some(event) = stream.next().await {
         match event {
             Ok(event) => {
+                timings = event.response_observation().unwrap().timings();
                 text |= event
                     .wire_event()
                     .is_some_and(|event| event.data()["delta"] == "partial")
@@ -266,6 +268,10 @@ async fn truncated_sse_fails_after_preserving_text() {
         }
     }
     assert!(text && failed);
+    assert!(timings.first_event_ms.is_some());
+    assert!(timings.first_token_ms.is_some());
+    assert!(timings.first_text_ms.is_some());
+    assert_eq!(timings.first_reasoning_ms, None);
 }
 
 #[tokio::test]

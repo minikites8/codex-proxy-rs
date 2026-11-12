@@ -245,12 +245,17 @@ async fn websocket_is_cold_and_uses_account_proxy_and_native_images() {
         );
     });
     let mut wire = Vec::new();
+    let mut timings = gateway_core::event::ProviderResponseTimings::default();
     while let Some(event) = response.next().await {
         let event = event.unwrap();
+        timings = event.response_observation().unwrap().timings();
         if let Some(event) = event.wire_event() {
             wire.push(event.data().clone());
         }
     }
+    assert!(timings.first_token_ms.is_some());
+    assert!(timings.first_text_ms.is_some());
+    assert_eq!(timings.first_reasoning_ms, None);
     assert_eq!(wire.len(), 2);
     assert_eq!(wire[0]["delta"], "hello");
     assert!(
@@ -582,7 +587,10 @@ async fn inline_image_upload_and_tool_relay_share_websocket_outbound_preparation
     assert!(upload.received_requests().await.unwrap().is_empty());
     let mut events = Vec::new();
     while let Some(event) = response.next().await {
-        events.push(event.unwrap().wire_event().unwrap().data().clone());
+        let event = event.unwrap();
+        if let Some(wire) = event.wire_event() {
+            events.push(wire.data().clone());
+        }
     }
     assert_eq!(
         events.len(),

@@ -121,6 +121,7 @@ impl BpsProvider {
                 if result.plan_type.is_none() {
                     result.plan_type = account.plan_type.clone();
                 }
+                attach_rolling_usage(&mut result, request.rolling_usage.cloned());
                 Ok(result)
             })
             .collect()
@@ -498,4 +499,28 @@ fn complete_allowed(document: &Map<String, Value>) -> bool {
                 .and_then(Value::as_f64)
                 .is_some_and(|used| (0.0..100.0).contains(&used))
         })
+}
+
+// 本地滚动统计与 WHAM 的共享配额独立，不以本地 Token 推算配额比例
+pub(crate) fn attach_rolling_usage(
+    quota: &mut ProviderQuota,
+    usage: Option<gateway_admin::model::accounts::AccountUsage>,
+) {
+    let Some(usage) = usage else { return };
+    quota.windows.push(ProviderQuotaWindow {
+        key: "local-rolling-24h".to_owned(),
+        group: "shortTerm".to_owned(),
+        label: "日用量".to_owned(),
+        limit_id: None,
+        limit_name: None,
+        role: None,
+        local_usage_attribution: QuotaLocalUsageAttribution::AccountWide,
+        window_seconds: Some(86_400),
+        used_percent: None,
+        reset_at: None,
+        limit_reached: false,
+        local_usage: Some(usage),
+        provider_data: None,
+        upstream: None,
+    });
 }
