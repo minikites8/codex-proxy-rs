@@ -466,7 +466,8 @@ fn project(document: &Map<String, Value>, observed_at: Option<SystemTime>) -> Pr
                             .get("reset_at")
                             .and_then(Value::as_i64)
                             .and_then(|timestamp| DateTime::from_timestamp(timestamp, 0)),
-                        limit_reached: reached || used.is_some_and(|value| value >= 100.0),
+                        // 账号被拒绝不表示每个独立窗口都已耗尽，否则展示和恢复时间会误用其他窗口
+                        limit_reached: used.is_some_and(|value| value >= 100.0),
                         local_usage: None,
                         provider_data: None,
                         upstream: None,

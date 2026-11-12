@@ -197,6 +197,56 @@ async fn missing_or_invalid_window_usage_does_not_become_free_or_zero() {
 }
 
 #[tokio::test]
+async fn exhausted_account_preserves_independent_window_usage_and_recovery() {
+    for (five_hour_used, weekly_used, reset_at) in [
+        (100, 32, 2_100_018_000),
+        (14, 100, 2_100_604_800),
+        (100, 100, 2_100_604_800),
+    ] {
+        let server = MockServer::start().await;
+        let mut exhausted = usage();
+        let limit = &mut exhausted["rate_limit"];
+        limit["allowed"] = false.into();
+        limit["limit_reached"] = true.into();
+        limit["primary_window"]["used_percent"] = weekly_used.into();
+        limit["primary_window"]["reset_at"] = 2_100_604_800_i64.into();
+        limit["secondary_window"]["used_percent"] = five_hour_used.into();
+        limit["secondary_window"]["reset_at"] = 2_100_018_000_i64.into();
+        mount(&server, exhausted).await;
+        let (provider, accounts, account) = fixture(&server).await;
+        let mut result = provider
+            .quota(ProviderQuotaRequest {
+                account_id: account.id().clone(),
+                refresh: true,
+                rolling_usage: None,
+            })
+            .await
+            .unwrap();
+        assert!(result.limit_reached);
+        result.apply_limit_reached_display();
+        for (key, used) in [("codex_5h", five_hour_used), ("codex_7d", weekly_used)] {
+            let window = result
+                .windows
+                .iter()
+                .find(|window| window.key == key)
+                .unwrap();
+            assert_eq!(window.used_percent, Some(f64::from(used)), "{key}");
+            assert_eq!(window.limit_reached, used == 100, "{key}");
+        }
+        let current = accounts.get_account(account.id()).await.unwrap().unwrap();
+        assert_eq!(
+            current.quota().access(),
+            gateway_core::account::QuotaAccessState::Exhausted
+        );
+        assert_eq!(
+            current.quota().reset_at(),
+            Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(reset_at)),
+            "only exhausted windows determine recovery"
+        );
+    }
+}
+
+#[tokio::test]
 async fn partial_headers_preserve_known_window_and_do_not_release_exhausted_account() {
     use futures::StreamExt;
     let server = MockServer::start().await;
