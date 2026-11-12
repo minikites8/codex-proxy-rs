@@ -236,13 +236,13 @@ fn encrypted_omission_does_not_invent_support_for_unknown_item_or_object_output(
 }
 
 #[test]
-fn encrypted_old_agent_context_is_lowered_but_current_assignment_is_rejected() {
+fn encrypted_agent_context_is_lowered_when_history_omission_is_enabled() {
     let policy = BpsRequestPolicy {
         ignore_encrypted_history: true,
         ..Default::default()
     };
-    let agent = json!({"type":"agent_message","author":"/root/worker","recipient":"/root","role":"developer","encrypted_content":"TOP_PRIVATE","content":[{"type":"input_text","text":"old agent plaintext"},{"type":"encrypted_content","encrypted_content":"PART_PRIVATE"}]});
-    let source = json!({"input":[agent,{"role":"user","content":"continue current task"}]});
+    let agent = || json!({"type":"agent_message","author":"/root/worker","recipient":"/root","role":"developer","encrypted_content":"TOP_PRIVATE","content":[{"type":"input_text","text":"old agent plaintext"},{"type":"encrypted_content","encrypted_content":"PART_PRIVATE"}]});
+    let source = json!({"input":[agent(),{"role":"user","content":"continue current task"}]});
     assert!(prepare(source.clone(), Default::default()).is_err());
     let result = prepare(source, policy).unwrap();
     let wire = result.body().to_string();
@@ -262,18 +262,33 @@ fn encrypted_old_agent_context_is_lowered_but_current_assignment_is_rejected() {
         })
         .unwrap();
     assert_eq!(lowered["role"], "user");
+    let current = prepare(
+        json!({"input":[{"role":"user","content":"previous"},agent()]}),
+        policy,
+    )
+    .unwrap();
+    let current_wire = current.body().to_string();
+    assert!(!current_wire.contains("TOP_PRIVATE"));
+    assert!(!current_wire.contains("PART_PRIVATE"));
+    assert!(current_wire.contains("Encrypted history omitted by request policy"));
     assert!(
         prepare(
-            json!({"input":[{"role":"user","content":"previous"},agent]}),
-            policy
+            json!({"input":[agent(),{"type":"additional_tools","tools":[]}]}),
+            policy,
         )
-        .is_err()
+        .is_ok()
     );
-    assert!(
-        prepare(
-            json!({"input":[agent,{"type":"additional_tools","tools":[]}]}),
-            policy
-        )
-        .is_err()
-    );
+    let opaque_current = prepare(
+        json!({
+            "input":[
+                {"role":"user","content":"previous"},
+                {"type":"agent_message","author":"/root/worker","encrypted_content":"ONLY_PRIVATE"}
+            ]
+        }),
+        policy,
+    )
+    .unwrap();
+    let opaque_wire = opaque_current.body().to_string();
+    assert!(!opaque_wire.contains("ONLY_PRIVATE"));
+    assert!(opaque_wire.contains("Encrypted history omitted by request policy"));
 }

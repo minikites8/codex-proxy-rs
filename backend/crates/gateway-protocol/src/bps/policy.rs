@@ -25,7 +25,7 @@ pub(super) fn normalize_input(
 ) -> Result<Vec<Value>, BpsProtocolError> {
     let mut images = false;
     let mut encrypted = false;
-    // 尾部代理消息仍是当前任务，省略历史不能替代当前不可读的指派内容
+    // 未开启兼容策略时，尾部代理消息仍是当前任务，不能静默丢弃其不可读指派
     let current = input.iter().rev().find(|item| {
         !matches!(
             item.get("type").and_then(Value::as_str),
@@ -45,7 +45,8 @@ pub(super) fn normalize_input(
                             part.get("type").and_then(Value::as_str) == Some("encrypted_content")
                         })
                     }))
-    }) {
+    }) && !policy.ignore_encrypted_history
+    {
         return Err(BpsProtocolError(
             "Basispoints cannot read a new encrypted agent assignment. Resend its original plaintext task.",
         ));

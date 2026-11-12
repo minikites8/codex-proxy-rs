@@ -787,7 +787,7 @@ Responses Lite 的 `input[].additional_tools` 和 `input[].tool_search_output` �
 
 - `omit_unsupported_hosted_tools`：自动工具选择时省略不支持的托管工具声明，并提示模型能力限制；强制工具选择仍拒绝
 - `omit_images_when_disabled`：仅当图片输入关闭时，把图片替换为明确占位，保留文字及工具结果配对；未开启时拒绝图片
-- `ignore_encrypted_history`：以明确占位替换加密历史，保留可读取的明文上下文
+- `ignore_encrypted_history`：以明确占位替换加密历史和加密 `agent_message`，保留可读取的明文上下文；密文任务本身不会恢复
 
 占位不会执行被省略的能力，也不恢复被省略的内容
 

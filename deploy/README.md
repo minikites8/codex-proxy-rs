@@ -61,7 +61,7 @@ bps:
 `image_input_enabled` 关闭时拒绝图片；同时开启 `omit_images_when_disabled` 才替换为占位提示
 Codex 请求携带 `web_search`、`image_generation` 等托管工具时，需将 `omit_unsupported_hosted_tools` 设为 `true`，
 允许省略这些 BPS 不支持的声明；未开启时返回 400，管理端简单连接测试不验证这些客户端能力
-若需要复用其他通道的加密历史，可将 `ignore_encrypted_history` 设为 `true`，以明确占位保留可读取上下文
+若需要复用其他通道的加密历史，可将 `ignore_encrypted_history` 设为 `true`，以明确占位保留可读取上下文；当前加密 `agent_message` 也会按此规则处理，密文任务本身不会恢复
 两者均保留明文与客户端工具，不代表托管工具或密文历史可用，也不影响已开启的图片输入
 
 ### 部署时区
