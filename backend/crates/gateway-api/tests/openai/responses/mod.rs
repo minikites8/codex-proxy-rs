@@ -53,7 +53,10 @@ fn responses_lite_should_force_serial_tool_calls() {
     )
     .expect("Responses Lite request should decode");
 
-    assert_eq!(openai_wire_body(&decoded)["parallel_tool_calls"], json!(false));
+    assert_eq!(
+        openai_wire_body(&decoded)["parallel_tool_calls"],
+        json!(false)
+    );
 }
 
 #[test]
