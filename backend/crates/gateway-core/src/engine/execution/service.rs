@@ -1376,12 +1376,8 @@ impl DefaultExecutionService {
             PublicModelId::new(upstream_model.as_str().to_owned()).map_err(|_| {
                 GatewayError::new(GatewayErrorKind::Unsupported, "Requested model is invalid.")
             })?;
-        let routing_context = RoutingContext {
-            required_provider: Some(provider_kind),
-            ..RoutingContext::default()
-        };
         let plan = snapshot
-            .plan_diagnostic(&public_model, &operation, &routing_context)
+            .plan_diagnostic(&provider_kind, &upstream_model, &operation)
             .map_err(map_routing_error)?;
         let started_at = SystemTime::now();
         let deadline_at = started_at.checked_add(DIAGNOSTIC_TIMEOUT).ok_or_else(|| {

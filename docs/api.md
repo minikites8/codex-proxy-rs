@@ -1545,7 +1545,8 @@ OAuth 等待回调期间不持有保护；提交仍拒绝已删除或连接配�
 
 ### 账号连接测试 SSE
 
-`GET /api/admin/accounts/connection-test` 固定探测请求指定的账号，不参与普通账号轮换。成功流沿用
+`GET /api/admin/accounts/connection-test` 固定探测指定 Provider、账号和上游模型，不参与普通账号轮换，
+不应用客户端模型映射或按全局模型目录排除目标；实际资格由 Provider 和上游验证。成功流沿用
 `test_start`、`request`、`content`、`test_complete` 事件；失败事件为：
 
 ```json

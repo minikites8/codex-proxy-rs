@@ -1230,39 +1230,39 @@ impl RuntimeSnapshot {
         &self.settings.min_codex_client_versions
     }
 
+    /// 管理探测固定上游目标，由 Provider 验证资格，不依赖客户端路由目录和模型映射
+    pub(crate) fn plan_diagnostic(
+        &self,
+        provider: &ProviderKind,
+        upstream_model: &UpstreamModelId,
+        operation: &Operation,
+    ) -> Result<RoutingPlan, RoutingError> {
+        if !self.providers.contains(provider) {
+            return Err(RoutingError::NoCapableProvider {
+                model: upstream_model.as_str().to_owned(),
+            });
+        }
+        let account_scope = self.all_account_scope();
+        let candidate = ProviderCandidate {
+            provider: provider.clone(),
+            upstream_model: Some(upstream_model.clone()),
+            model_presentation: self
+                .provider_model_presentations
+                .get(provider)
+                .and_then(|models| models.get(upstream_model))
+                .cloned(),
+            emulated_features: BTreeSet::new(),
+            account_scope: Arc::clone(&account_scope),
+        };
+        Ok(self.build_plan(operation, account_scope, vec![candidate]))
+    }
+
     pub fn plan(
         &self,
         public_model: &PublicModelId,
         operation: &Operation,
         account_scope: Arc<FrozenAccountScope>,
         context: &RoutingContext,
-    ) -> Result<RoutingPlan, RoutingError> {
-        self.plan_inner(public_model, operation, account_scope, context, true)
-    }
-
-    /// 管理探测已固定目标账号，不使用数据面 Key 的账号模型政策裁决探测资格
-    pub(crate) fn plan_diagnostic(
-        &self,
-        public_model: &PublicModelId,
-        operation: &Operation,
-        context: &RoutingContext,
-    ) -> Result<RoutingPlan, RoutingError> {
-        self.plan_inner(
-            public_model,
-            operation,
-            self.all_account_scope(),
-            context,
-            false,
-        )
-    }
-
-    fn plan_inner(
-        &self,
-        public_model: &PublicModelId,
-        operation: &Operation,
-        account_scope: Arc<FrozenAccountScope>,
-        context: &RoutingContext,
-        enforce_account_model_policy: bool,
     ) -> Result<RoutingPlan, RoutingError> {
         let requirements = operation.capability_requirements();
         let mut candidates = Vec::new();
@@ -1314,10 +1314,8 @@ impl RuntimeSnapshot {
             {
                 continue;
             }
-            // 强制 Provider 路由也不能扩大 Key 授权；管理诊断的目标账号由探测入口固定
-            if enforce_account_model_policy
-                && !account_scope.allows_provider_model(provider, upstream_model.as_str())
-            {
+            // 强制 Provider 路由也不能扩大 Key 授权
+            if !account_scope.allows_provider_model(provider, upstream_model.as_str()) {
                 continue;
             }
             let capabilities = self
@@ -1427,7 +1425,16 @@ impl RuntimeSnapshot {
             });
         }
 
-        Ok(RoutingPlan {
+        Ok(self.build_plan(operation, account_scope, candidates))
+    }
+
+    fn build_plan(
+        &self,
+        operation: &Operation,
+        account_scope: Arc<FrozenAccountScope>,
+        candidates: Vec<ProviderCandidate>,
+    ) -> RoutingPlan {
+        RoutingPlan {
             request_body_limit: self.responses_max_decompressed_body_bytes(),
             max_retry_after: std::time::Duration::from_secs(u64::from(
                 self.settings.values.max_retry_after_seconds,
@@ -1447,7 +1454,7 @@ impl RuntimeSnapshot {
                 .expect("constant request attempt limit is non-zero"),
             account_scope,
             candidates: Arc::from(candidates),
-        })
+        }
     }
 
     /// 为 Provider 自有端点冻结请求计划
@@ -1517,26 +1524,6 @@ impl RuntimeSnapshot {
             emulated_features: BTreeSet::new(),
             account_scope: Arc::clone(&account_scope),
         };
-        Ok(RoutingPlan {
-            request_body_limit: self.responses_max_decompressed_body_bytes(),
-            max_retry_after: std::time::Duration::from_secs(u64::from(
-                self.settings.values.max_retry_after_seconds,
-            )),
-            config_revision: self.revision,
-            pricing: Arc::clone(&self.settings.values.pricing),
-            request_location: self.settings.request_location.clone(),
-            privacy: self.settings.privacy.clone(),
-            account_error_protection: Arc::clone(&self.settings.account_error_protection),
-            account_error_protection_revision: self
-                .settings
-                .values
-                .account_error_protection_revision,
-            account_selection_policy: self.settings.account_selection_policy,
-            operation: operation.kind(),
-            max_attempts: NonZeroU32::new(super::MAX_REQUEST_ATTEMPTS)
-                .expect("constant request attempt limit is non-zero"),
-            account_scope,
-            candidates: Arc::from([candidate]),
-        })
+        Ok(self.build_plan(operation, account_scope, vec![candidate]))
     }
 }

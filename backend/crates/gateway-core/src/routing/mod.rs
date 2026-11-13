@@ -527,7 +527,7 @@ impl ProviderModel {
 /// 本次请求选择 Provider 时使用的动态过滤事实
 #[derive(Debug, Clone, Default)]
 pub struct RoutingContext {
-    /// 管理端 connection test 显式限制的 Provider；普通请求留空
+    /// 本次请求显式限制的 Provider，未指定时按模型归属选择
     pub required_provider: Option<ProviderKind>,
     pub blocked_providers: BTreeSet<ProviderKind>,
 }

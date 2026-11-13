@@ -3483,6 +3483,93 @@ fn diagnostic_probe_does_not_apply_data_plane_account_model_policy() {
 }
 
 #[test]
+fn diagnostic_probe_uses_the_pinned_provider_and_upstream_model_without_catalog_routing() {
+    let provider = ProviderKind::new("bps").unwrap();
+    let other = ProviderKind::new("openai").unwrap();
+    let model = UpstreamModelId::new("gpt-5.6-luna").unwrap();
+    for (catalog_model, catalog_operation, mapped) in [
+        (None, OperationKind::Generate, false),
+        (Some("other-model"), OperationKind::Generate, false),
+        (Some(model.as_str()), OperationKind::Search, false),
+        (Some(model.as_str()), OperationKind::Generate, true),
+    ] {
+        let mut models = vec![ProviderModel::new(
+            other.clone(),
+            model.clone(),
+            ModelCapabilities::new([OperationKind::Generate].into(), None),
+        )];
+        if let Some(id) = catalog_model {
+            models.push(ProviderModel::new(
+                provider.clone(),
+                UpstreamModelId::new(id).unwrap(),
+                ModelCapabilities::new([catalog_operation].into(), None),
+            ));
+        }
+        let mut settings =
+            gateway_core::settings::SettingsValues::new(1, "smart", Default::default(), None, None);
+        if mapped {
+            settings = settings
+                .with_model_mappings(BTreeMap::from([(model.to_string(), "mapped-model".into())]));
+        }
+        let snapshot = RuntimeSnapshot::new(
+            ConfigRevision::new(1).unwrap(),
+            settings,
+            vec![provider.clone(), other.clone()],
+            models,
+            Vec::new(),
+        )
+        .unwrap();
+        let payload = ProtocolPayload::json_object(
+            "openai",
+            json!({"model":model.as_str(),"input":"probe","stream":true})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        let operation = Operation::Generate(GenerateRequest::from_protocol_payload(payload));
+        assert!(
+            snapshot
+                .plan(
+                    &PublicModelId::new(model.as_str()).unwrap(),
+                    &operation,
+                    account_scope(&provider, "acct_pinned_probe"),
+                    &Default::default(),
+                )
+                .is_err(),
+            "data-plane routing must still enforce model ownership and capabilities"
+        );
+        let service = DefaultExecutionService::new(
+            RuntimeSnapshotHandle::new(snapshot),
+            Arc::new(TrackingExecutionStore::default()),
+            ProviderRegistry::new([Arc::new(PinnedProbeProvider) as Arc<dyn Provider>]).unwrap(),
+            Arc::new(UnusedAdmissions),
+            Arc::new(UnusedContinuation),
+            Arc::new(RecordingClientApiKeyUsage::default()),
+            Arc::new(crate::RecordingDiagnostics::default()),
+        );
+        let error = block_on(service.probe(
+            AccountProbeRequest {
+                target: AccountProbeTarget::ConnectionTest(
+                    ProviderAccountId::new("acct_pinned_probe").unwrap(),
+                ),
+                provider_kind: provider.clone(),
+                upstream_model: model.clone(),
+                operation,
+            },
+            None,
+        ))
+        .expect_err("the selected Provider returns its own diagnostic failure");
+        assert_eq!(
+            error.source(),
+            AccountProbeErrorSource::Provider,
+            "catalog={catalog_model:?}, operation={catalog_operation:?}, mapped={mapped}"
+        );
+        assert_eq!(error.send_state(), Some(UpstreamSendState::NotSent));
+    }
+}
+
+#[test]
 fn probe_observation_store_failure_preserves_the_provider_error() {
     let store = Arc::new(TrackingExecutionStore {
         fail_probe_observation: AtomicBool::new(true),
@@ -3860,6 +3947,49 @@ impl Provider for FailingProvider {
 }
 
 struct LocalFailingProvider;
+
+struct PinnedProbeProvider;
+
+#[async_trait]
+impl Provider for PinnedProbeProvider {
+    fn name(&self) -> &'static str {
+        "bps"
+    }
+
+    fn catalog_generation(&self) -> ProviderCatalogGeneration {
+        ProviderCatalogGeneration::default()
+    }
+
+    async fn query_model_capabilities(
+        &self,
+    ) -> Result<Vec<ProviderModelCapabilities>, ProviderError> {
+        Err(ProviderError::new(
+            ProviderErrorKind::ProviderInfrastructureUnavailable,
+            UpstreamSendState::NotSent,
+        ))
+    }
+
+    async fn execute(
+        self: Arc<Self>,
+        request: ProviderRequest,
+        context: AttemptContext,
+    ) -> Result<ProviderStream, ProviderError> {
+        assert_eq!(request.candidate().provider().as_str(), "bps");
+        assert_eq!(
+            request.candidate().upstream_model().unwrap().as_str(),
+            "gpt-5.6-luna"
+        );
+        assert_eq!(
+            context.required_account().unwrap().as_str(),
+            "acct_pinned_probe"
+        );
+        assert!(context.is_diagnostic_required_account());
+        Err(ProviderError::new(
+            ProviderErrorKind::Unsupported,
+            UpstreamSendState::NotSent,
+        ))
+    }
+}
 
 #[async_trait]
 impl Provider for LocalFailingProvider {
